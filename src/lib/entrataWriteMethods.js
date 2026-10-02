@@ -1,0 +1,17 @@
+export const ENTRATA_WRITE_METHODS = new Set([
+  "cancelLease",
+  "onNoticeLease",
+  "sendLeaseActivities",
+  "sendRentersInsurancePolicies",
+  "sendRoommateGroups",
+  "sendLeaseArTransactions",
+  "sendLeaseArTransactionReversals",
+  "sendRentableItems",
+  "updateBudgets",
+  "sendInvoices",
+  "updateVendors",
+  "sendPurchaseOrders",
+  "updateLeads",
+  "sendMitsLeads",
+  "sendApplication",
+]);

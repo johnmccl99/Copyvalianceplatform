@@ -1,0 +1,503 @@
+{
+  "schema": "user-guide-status/1",
+  "surfaces": [
+    {
+      "key": "actions",
+      "name": "Action Items",
+      "group": "Home",
+      "status": "Live"
+    },
+    {
+      "key": "activityTimeline",
+      "name": "Activity Timeline",
+      "group": "Home",
+      "status": "Live"
+    },
+    {
+      "key": "adminArchitecture",
+      "name": "Architecture",
+      "group": "Admin Console",
+      "status": "Preview"
+    },
+    {
+      "key": "adminAuditLog",
+      "name": "Audit & Activity",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminDataMgmt",
+      "name": "Data Management",
+      "group": "Admin Console",
+      "status": "Planned"
+    },
+    {
+      "key": "adminDataPrivacy",
+      "name": "Data Privacy",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminExportControls",
+      "name": "Export Controls",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminMfa",
+      "name": "Multi-Factor Auth",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminNewsFeeds",
+      "name": "News Sources",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminOnboarding",
+      "name": "Onboarding",
+      "group": "Admin Console",
+      "status": "Preview"
+    },
+    {
+      "key": "adminSecurityProgram",
+      "name": "Security Program",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminSessions",
+      "name": "Sessions & Network",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminSettings",
+      "name": "Settings",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminUnderwriting",
+      "name": "Underwriting Model Intake",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminUsers",
+      "name": "Users & Access",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "adminVendors",
+      "name": "Vendor Risk",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "alerts",
+      "name": "Alerts & Notifications",
+      "group": "Home",
+      "status": "Live"
+    },
+    {
+      "key": "assumptionExplanations",
+      "name": "Assumption Explanations",
+      "group": "Beta",
+      "status": "Live"
+    },
+    {
+      "key": "biDashboards",
+      "name": "BI Dashboards",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "budgetAgent",
+      "name": "Budget Agent",
+      "group": "Budget Consolidation",
+      "status": "Live"
+    },
+    {
+      "key": "budgetWorkbookIntake",
+      "name": "Budget Workbook Intake",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "changeLog",
+      "name": "Change Log",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "cmDebtMarkets",
+      "name": "Debt & Lending",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "cmEquityMarkets",
+      "name": "Equity Markets",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "cmFundraising",
+      "name": "Fund & Fundraising",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "cmInvestorRelations",
+      "name": "Investor Relations",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "cmNews",
+      "name": "Industry News",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "cmTransactions",
+      "name": "Transactions & Comps",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "corporateFinancials",
+      "name": "Corporate P&L",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "cycleTime",
+      "name": "Cycle Time",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "dataHealth",
+      "name": "Data Health",
+      "group": "Beta",
+      "status": "Live"
+    },
+    {
+      "key": "debtDashboard",
+      "name": "Debt & Capital",
+      "group": "More",
+      "status": "Planned"
+    },
+    {
+      "key": "home",
+      "name": "Executive Summary",
+      "group": "Home",
+      "status": "Live"
+    },
+    {
+      "key": "integrationHub",
+      "name": "Integrations",
+      "group": "Admin Console",
+      "status": "Live"
+    },
+    {
+      "key": "meetings",
+      "name": "Meetings",
+      "group": "Home",
+      "status": "Live"
+    },
+    {
+      "key": "moduleVisibility",
+      "name": "Module Visibility",
+      "group": "Beta",
+      "status": "Live"
+    },
+    {
+      "key": "myCalendar",
+      "name": "Calendar",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "myComms",
+      "name": "Communications",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "myFileStorage",
+      "name": "File Storage",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "myNotes",
+      "name": "Notes",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "myPerformance",
+      "name": "Performance & Goals",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "myRoles",
+      "name": "Roles & Responsibilities",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "myTasks",
+      "name": "Tasks",
+      "group": "More",
+      "status": "Preview"
+    },
+    {
+      "key": "portfolioAssumptions",
+      "name": "Portfolio Assumptions",
+      "group": "Beta",
+      "status": "Live"
+    },
+    {
+      "key": "portfolioBudget",
+      "name": "Portfolio Budget",
+      "group": "Budget Consolidation",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.capex",
+      "name": "Asset Management > CapEx & Construction",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.assetMgmt.financialStatements",
+      "name": "Quarterly Reporting > Financial Statements",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.incomeExpenses",
+      "name": "Asset Management > Income & Expenses",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.leasing",
+      "name": "Asset Management > Leasing",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.leasing.adjustments",
+      "name": "Asset Management > Leasing > Adjustments",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.leasing.signOff",
+      "name": "Live Rent Rolls > Version History",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.assetMgmt.operations",
+      "name": "Asset Management > Operations",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.budget.analysis",
+      "name": "Budget Consolidation > Analysis",
+      "group": "Budget Consolidation",
+      "status": "Live"
+    },
+    {
+      "key": "prop.budget.editor",
+      "name": "Budget Consolidation > Itemized Editor",
+      "group": "Budget Consolidation",
+      "status": "Live"
+    },
+    {
+      "key": "prop.budget.pyVariance",
+      "name": "Variance Analysis > Prior-Year Variance",
+      "group": "Variance Analysis",
+      "status": "Live"
+    },
+    {
+      "key": "prop.budget.uwVariance",
+      "name": "Variance Analysis > Underwriting Variance",
+      "group": "Variance Analysis",
+      "status": "Live"
+    },
+    {
+      "key": "prop.budget.variance",
+      "name": "Variance Analysis > Budget Variance",
+      "group": "Variance Analysis",
+      "status": "Live"
+    },
+    {
+      "key": "prop.budget.writeback",
+      "name": "Budget Consolidation > Entrata Writeback",
+      "group": "Budget Consolidation",
+      "status": "Live"
+    },
+    {
+      "key": "prop.capitalStack.debt",
+      "name": "Capital Stack > Debt",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.capitalStack.equity",
+      "name": "Capital Stack > Equity",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.capitalStack.overview",
+      "name": "Capital Stack > Stack Overview",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.customReports",
+      "name": "Quarterly Reporting > API Report Builder",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "prop.fileStorage",
+      "name": "Quarterly Reporting > File Storage",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "prop.overview.businessPlan",
+      "name": "Overview > Business Plan",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.overview.dashboard",
+      "name": "Overview > Dashboard",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "prop.overview.fileStorage",
+      "name": "Quarterly Reporting > File Storage (collapsed Overview twin)",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "prop.overview.reportingEngine",
+      "name": "Overview > Reporting Engine",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.overview.underwritingModel",
+      "name": "Quarterly Reporting > Underwriting Model",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "prop.strategy.benchmarking",
+      "name": "Strategy > Market & Benchmarking",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.strategy.capitalMarkets",
+      "name": "Strategy > Capital Markets",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.strategy.esg",
+      "name": "Strategy > ESG & GRESB",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.strategy.riskDashboard",
+      "name": "Strategy > Risk Dashboard",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.strategy.scenarioModeling",
+      "name": "Strategy > Scenario Modeling",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.strategy.taxStrategy",
+      "name": "Strategy > Tax Strategy",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.transactions.acquisition",
+      "name": "Transactions > Acquisition",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.transactions.disposition",
+      "name": "Transactions > Disposition",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.transactions.recapitalization",
+      "name": "Transactions > Recapitalization",
+      "group": "Property",
+      "status": "Preview"
+    },
+    {
+      "key": "prop.transactions.refinance",
+      "name": "Transactions > Refinance",
+      "group": "Property",
+      "status": "Live"
+    },
+    {
+      "key": "quarterlyAssembler",
+      "name": "Quarterly Assembler",
+      "group": "Quarterly Reporting",
+      "status": "Live"
+    },
+    {
+      "key": "unifiedPortfolioView",
+      "name": "Unified Portfolio View",
+      "group": "Variance Analysis",
+      "status": "Live"
+    },
+    {
+      "key": "usageDashboard",
+      "name": "Usage & Time Saved",
+      "group": "Beta",
+      "status": "Live"
+    },
+    {
+      "key": "userGuide",
+      "name": "User Guide",
+      "group": "More",
+      "status": "Live"
+    },
+    {
+      "key": "workflowAutomation",
+      "name": "Workflow Automation",
+      "group": "Admin Console",
+      "status": "Preview"
+    }
+  ]
+}

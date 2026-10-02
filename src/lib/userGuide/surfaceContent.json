@@ -1,0 +1,282 @@
+{
+  "schema": "user-guide-content/1",
+  "content": {
+    "actions": {
+      "whatItIs": "Action Items is a tracker for open tasks and follow-ups tied to portfolio work. It keeps a running list of what needs to get done.",
+      "howItWorks": "It loads from the action_items table in Supabase through fetchActionItems and loadAllData."
+    },
+    "activityTimeline": {
+      "whatItIs": "The Activity Timeline is a chronological feed of recent activity across the platform. It shows what has happened lately in one running stream.",
+      "howItWorks": "It pulls from the activity_feed table in Supabase through fetchActivityFeed and loadAllData."
+    },
+    "adminArchitecture": {
+      "whatItIs": "A preview diagram of the platform's modules and data flows. The content shown is illustrative and not generated from live system state."
+    },
+    "adminAuditLog": {
+      "whatItIs": "A record of security-relevant actions taken across your organization, such as logins, permission changes, and data access.",
+      "howItWorks": "Reads the audit_log table for your organization."
+    },
+    "adminDataMgmt": {
+      "whatItIs": "A planned data management surface. It is not built yet, so there is nothing to use here today."
+    },
+    "adminDataPrivacy": {
+      "whatItIs": "Manage data retention policies and the history of data subject requests, supporting privacy compliance work.",
+      "howItWorks": "Reads the retention_policies and dsr_history tables."
+    },
+    "adminExportControls": {
+      "whatItIs": "Define and review the rules that govern data exports, including pending export requests that need approval.",
+      "howItWorks": "Reads the export_policies and export_requests tables."
+    },
+    "adminMfa": {
+      "whatItIs": "Set up and manage multi-factor authentication for your account, including enrolling an authenticator app.",
+      "howItWorks": "Lists and enrolls TOTP factors against Supabase auth.mfa_factors."
+    },
+    "adminNewsFeeds": {
+      "whatItIs": "Manage the news sources that feed the platform's Industry News surface, including adding and editing feeds.",
+      "howItWorks": "Reads and upserts the news_feeds table."
+    },
+    "adminOnboarding": {
+      "whatItIs": "A preview of an onboarding checklist that walks through platform setup steps. The progress shown is sample state, not live tracking yet."
+    },
+    "adminSecurityProgram": {
+      "whatItIs": "Track your organization's security program work, including open tasks and identified risks.",
+      "howItWorks": "Reads the security_program_tasks and security_risks tables."
+    },
+    "adminSessions": {
+      "whatItIs": "View active user sessions and the network policy that governs them, so you can see who is signed in and where.",
+      "howItWorks": "Reads the user_sessions and session_policies tables."
+    },
+    "adminSettings": {
+      "whatItIs": "Configure platform-level settings for your organization in one place.",
+      "howItWorks": "Reads and saves the platform_settings table."
+    },
+    "adminUnderwriting": {
+      "whatItIs": "Underwriting Model Intake is where Excel underwriting models get ingested and turned into the structured, per-property data the platform builds on. It is the entry point for bringing a property's model into the system.",
+      "howItWorks": "It drives the ingest and discovery pipeline, kicking off background discovery runs through underwriting-discover and tracking them with fetchActiveDiscoveryRuns."
+    },
+    "adminUsers": {
+      "whatItIs": "Manage who can access the platform for your organization, including their roles and permission levels. This is where you add, remove, and adjust users.",
+      "howItWorks": "Reads and writes the user_profiles and user_roles tables, scoped to your organization."
+    },
+    "adminVendors": {
+      "whatItIs": "Track third-party vendors and their associated risk so you have a record of who handles your data and how exposed you are.",
+      "howItWorks": "Reads the security_vendors table."
+    },
+    "alerts": {
+      "whatItIs": "Alerts and Notifications surfaces flags that need attention across the portfolio, in one place. It is the inbox for things the platform thinks you should look at.",
+      "howItWorks": "It reads from the alerts table in Supabase via fetchAlerts and loadAllData, so each alert shown is a real stored row."
+    },
+    "assumptionExplanations": {
+      "whatItIs": "Assumption Explanations answers \"how was this budget assumption derived\" for each account - the rule that produced the number, the GL window and statistics behind it, a confidence grade, and a plain-prose narrative. A second view holds the review queue: the lines the engine routed to human judgment, plus flagged growth and contract-rate checks.",
+      "howItWorks": "Reads the append-only derivation records for the selected property and fiscal year through get_budget_assumption_explanations, alongside the property's itemized lines. Derived values are suggestions and are never applied on their own: accepting one runs the same propagation flow as Portfolio Assumptions - dry-run, typed row-count confirmation, token-gated apply - and then appends an acceptance record. Analyst notes append to the same history."
+    },
+    "biDashboards": {
+      "whatItIs": "Read-only operational dashboards built on Entrata data — occupancy, lease expiration, concessions and work-order backlog — each stamped with how current the underlying sync is.",
+      "howItWorks": "Dashboards read from Entrata-backed RPCs (for example fetchEntrataPortfolioOccupancy and fetchEntrataLeaseExpiration); all 5 dashboards are live today, and the Bank Accounts tab is visible to GPs only."
+    },
+    "budgetWorkbookIntake": {
+      "whatItIs": "Upload budget workbook files for a property so they can be parsed into the platform's budget pipeline.",
+      "howItWorks": "Writes uploads to the raw.budget_workbook_file_registry and triggers the budget-workbook-parse-background function to process them."
+    },
+    "cmDebtMarkets": {
+      "whatItIs": "A snapshot of debt-market conditions - rates, spreads, and lending terms relevant to financing decisions. This is a preview surface; the rates shown are sample data and no live market feed is wired in yet."
+    },
+    "cmEquityMarkets": {
+      "whatItIs": "A view of equity-market conditions and capital-markets pricing relevant to the firm. This is a preview surface; the figures are sample data and no live market feed is wired in yet."
+    },
+    "cmFundraising": {
+      "whatItIs": "A fund-level fundraising overview covering target size, commitments to date, and progress against the raise. This is a preview surface showing sample data, not connected to live fund records."
+    },
+    "cmInvestorRelations": {
+      "whatItIs": "A working view of the LP fundraising pipeline - prospective investors, commitments, and where each stands in the raise. It is a preview surface, so the figures shown are sample data, not your firm's live investor records."
+    },
+    "cmNews": {
+      "whatItIs": "A feed of commercial real-estate industry news aggregated from configured sources.",
+      "howItWorks": "Reads articles from the news_items table, which is populated by the configured news feeds managed under Admin Console > News Sources."
+    },
+    "cmTransactions": {
+      "whatItIs": "A list of recent sale and financing comps for benchmarking deals against the market. This is a preview surface showing sample transaction data, not a live comps feed."
+    },
+    "corporateFinancials": {
+      "whatItIs": "A firm-level profit-and-loss view covering corporate revenue, expenses, and margin. This is a preview surface showing sample financials, not connected to live accounting data."
+    },
+    "cycleTime": {
+      "whatItIs": "Cycle Time measures how long each property's quarterly reporting cycle takes, in days, broken into its phases (parse, review, parity, write-back) - the number the platform is trying to compress.",
+      "howItWorks": "Reads the budget_reporting_cycle_durations RPC, which derives each cycle's span from the property's reforecast kickoff through the Entrata write-back that closes it."
+    },
+    "dataHealth": {
+      "whatItIs": "Data Health is one pre-send accuracy view across properties: whether the budget substrate's GL actuals agree with Entrata's general ledger for each closed month, how far each live rent roll has moved since the version that was signed, and whether every Entrata lease resolves to a unit. Every verdict names both sources and when each was last updated.",
+      "howItWorks": "Runs three read-only checks - check_gl_reconciliation_summary, check_rent_roll_drift against the signed rent_roll_versions lines, and check_unit_lease_match over entrata_units and entrata_leases. A check that fails reads \"check unavailable\" rather than a false all-clear. The tolerances and floors behind the verdicts are default values, so the checks are live and the thresholds can be tuned; the thresholds are not yet agreed."
+    },
+    "debtDashboard": {
+      "whatItIs": "A planned corporate debt-and-capital dashboard. The surface is not built yet - it is a thin wrapper with no data behind it."
+    },
+    "home": {
+      "whatItIs": "The Executive Summary is the platform's landing page, giving a portfolio-wide read across funds, properties, pipeline, and investors. It is where you start to see the state of the whole book at a glance.",
+      "howItWorks": "It pulls live records from the funds, properties, pipeline, and investor tables in Supabase through the loaders fetchFunds, fetchProperties, and loadAllData."
+    },
+    "integrationHub": {
+      "whatItIs": "Connect and monitor third-party data integrations, and review the history of sync runs for each connector.",
+      "howItWorks": "Reads the connectors and connector_sync_runs tables."
+    },
+    "meetings": {
+      "whatItIs": "Meetings is a view of scheduled meetings recorded on the platform. It lists what is on the calendar in the platform's own meetings record.",
+      "howItWorks": "It reads from the meetings table in Supabase via fetchMeetings."
+    },
+    "moduleVisibility": {
+      "whatItIs": "Module Visibility lets an administrator curate which platform surfaces are visible to their organization. Optional modules can be toggled off; security and compliance surfaces can never be hidden.",
+      "howItWorks": "Toggles write per-org visibility flags to the module_visibility table; the left-hand navigation reads those flags and drops hidden surfaces for everyone in the org."
+    },
+    "myCalendar": {
+      "whatItIs": "Your upcoming meetings and calendar events shown inside the platform.",
+      "howItWorks": "Pulls your upcoming events from your Microsoft 365 calendar through Microsoft Graph."
+    },
+    "myComms": {
+      "whatItIs": "Your email inbox and message folders surfaced inside the platform so you can read and send mail without switching apps.",
+      "howItWorks": "Connects to your Microsoft 365 account through Microsoft Graph to load mail folders and send email."
+    },
+    "myFileStorage": {
+      "whatItIs": "The organization's document library: browse and upload platform files, and search connected Dropbox, OneDrive and SharePoint accounts alongside them.",
+      "howItWorks": "Pulls files from Supabase-backed platform folders alongside your connected Dropbox and SharePoint accounts."
+    },
+    "myNotes": {
+      "whatItIs": "A personal notepad for jotting down notes. This is a preview surface - notes are saved only in your browser's local storage, not to a shared backend, so they do not sync across devices."
+    },
+    "myPerformance": {
+      "whatItIs": "A personal view of your goals and performance against them. This is a preview surface - goals are saved only in your browser's local storage, not to a shared backend."
+    },
+    "myRoles": {
+      "whatItIs": "A personal view of your roles and responsibilities within the firm. This is a preview surface; the role assignments shown are sample data, not your live profile."
+    },
+    "myTasks": {
+      "whatItIs": "A personal task list for tracking your own to-dos. This is a preview surface - tasks are saved only in your browser's local storage, not to a shared backend, so they do not sync across devices."
+    },
+    "portfolioAssumptions": {
+      "whatItIs": "Portfolio Assumptions lets you author a budget assumption change once and apply it across the properties you pick, as ordinary versioned per-property edits. Version 1 moves real dollars on the direct-amount itemized fields only - amount, frequency, first month, last month.",
+      "howItWorks": "Every apply is gated: a dry-run resolves the change-set against each scoped property and shows the row-level blast radius and forward dollar delta, issues a single-use approval token, and the apply then requires you to type the matched-row count. Batches are recorded in assumption_propagation_applies with pre-images and can be undone whole. Two limits are worth knowing: a PDPQ rate change records the assumption but does not move the forecast, and the workbook's method toggles - vacancy factor, loss-to-lease, renewal, concessions - are not selectable here."
+    },
+    "portfolioBudget": {
+      "whatItIs": "Every property's budget rolled into one org-wide, month-by-month view — NOI build, account detail and running balances — with each property's actuals blended in through its own last closed month.",
+      "howItWorks": "Reads the org-wide budget rollup RPCs (NOI build, chart-of-accounts monthly, running balances) that aggregate each property's approved budget and GL actuals."
+    },
+    "prop.assetMgmt.capex": {
+      "whatItIs": "A CapEx and construction tracker for the property - capital projects and construction draw activity.",
+      "howItWorks": "Reads construction draw records via fetchConstructionDraws."
+    },
+    "prop.assetMgmt.incomeExpenses": {
+      "whatItIs": "The property's income and expense view - rent roll income against the operating budget to show how the property is performing financially.",
+      "howItWorks": "Reads the tenant rent-roll via fetchTenants and loadAllData, alongside the operating budget data."
+    },
+    "prop.assetMgmt.leasing": {
+      "whatItIs": "A tenant CRM and leasing view for the property - the rent roll, tenant detail, and lease tracking.",
+      "howItWorks": "Reads the property's tenant rent-roll via fetchTenants and loadAllData."
+    },
+    "prop.assetMgmt.operations": {
+      "whatItIs": "An operations hub for day-to-day property management - work orders, maintenance, and operational tracking. Currently a preview surface with no live backing."
+    },
+    "prop.budget.analysis": {
+      "whatItIs": "A read-only analysis view of the property's budget - chart-of-accounts detail by month and the NOI build derived from the budget pipeline.",
+      "howItWorks": "Reads the budget pipeline via fetchBudgetPropertyCodes and fetchBudgetCoaMonthly."
+    },
+    "prop.budget.writeback": {
+      "whatItIs": "The surface that writes the property's finalized budget back into Entrata - pushing the platform's budget numbers to the source property-management system.",
+      "howItWorks": "Opens as the Entrata send drawer on Budget & Forecast - the standalone Entrata Writeback pill is hidden and the drawer mounts this same view. Reads the budget via fetchBudgetCoaMonthly and posts it to Entrata through the entrata-budget-writeback function (postEntrataBudgetWriteback)."
+    },
+    "prop.capitalStack.debt": {
+      "whatItIs": "The property's debt dashboard - loan tranches, terms, maturities, and covenant tracking.",
+      "howItWorks": "Reads the debt portfolio and covenant records via fetchDebtCovenants and loadAllData."
+    },
+    "prop.capitalStack.equity": {
+      "whatItIs": "The property's equity view - investor classes, capital calls, and the distribution waterfall.",
+      "howItWorks": "Reads capital-call and waterfall records via fetchCapitalCalls and loadAllData."
+    },
+    "prop.capitalStack.overview": {
+      "whatItIs": "A view of the property's full capital structure - how debt and equity stack up to fund the deal.",
+      "howItWorks": "Reads the property and its capital-stack records via fetchProperties and loadAllData."
+    },
+    "prop.customReports": {
+      "whatItIs": "A custom report builder for the property - saved report chains run against live Entrata data for the property.",
+      "howItWorks": "Reads saved report chains via fetchCustomReportsForProperty and runs them through the entrata-execute-report function."
+    },
+    "prop.fileStorage": {
+      "whatItIs": "The property's document storage - files organized by property and section, mirroring the property page hierarchy.",
+      "howItWorks": "Reads folder and document records via fetchFolderTree."
+    },
+    "prop.overview.businessPlan": {
+      "whatItIs": "A tracker for the property's value-creation plan - the milestones, initiatives, and progress toward the deal's stated strategy. Currently a preview surface; the data shown is not yet wired to a live source."
+    },
+    "prop.overview.dashboard": {
+      "whatItIs": "The landing view for a single property. Shows the property's key facts - identity, unit count, occupancy, debt summary, and headline KPI cards - in one place.",
+      "howItWorks": "Reads the property, tenant rent-roll, and debt records via fetchProperties and loadAllData, and renders the canonical KPI cards derived from the property's underwriting model."
+    },
+    "prop.overview.fileStorage": {
+      "whatItIs": "The property's documents organized in the same hierarchy as its page tabs - loan quotes, term sheets, appraisals, and other files filed by property and section.",
+      "howItWorks": "Reads folder and document records via fetchFolderTree and fetchDocuments, presenting a view layer over the property's stored files."
+    },
+    "prop.overview.reportingEngine": {
+      "whatItIs": "A template-driven report builder for property-level reporting. Currently a preview surface built on a hardcoded template library, not live report generation."
+    },
+    "prop.overview.underwritingModel": {
+      "whatItIs": "The property's underwriting model surfaced inside the platform - the canonical KPIs, returns, and assumptions extracted from the Valiance Excel model that acts as the property's structural backbone.",
+      "howItWorks": "Reads the property_underwriting_model_graphs / canonical_values produced by the model ingest, which builds a cell-level dependency DAG from the Excel model and tags output cells with canonical keys."
+    },
+    "prop.strategy.benchmarking": {
+      "whatItIs": "A market and benchmarking view for the property - comps and peer comparison. Currently a preview surface backed by hardcoded benchmark and comp data."
+    },
+    "prop.strategy.capitalMarkets": {
+      "whatItIs": "A capital markets monitor for the property - interest rate and cap rate trends relevant to financing and exit. Currently a preview surface backed by hardcoded market data, not a live feed."
+    },
+    "prop.strategy.esg": {
+      "whatItIs": "An ESG and GRESB view for the property - sustainability metrics and benchmarking. Currently a preview surface backed by hardcoded ESG data."
+    },
+    "prop.strategy.riskDashboard": {
+      "whatItIs": "A risk view for the property - a watchlist and exposure summary of what could threaten the deal. Currently a preview surface backed by hardcoded risk data."
+    },
+    "prop.strategy.scenarioModeling": {
+      "whatItIs": "A scenario modeling hub for the property - testing how returns shift under different assumptions on the underwriting model.",
+      "howItWorks": "Reads the latest scenario sweep results via fetchLatestScenarioSweep from the scenario_sweeps data."
+    },
+    "prop.strategy.taxStrategy": {
+      "whatItIs": "A tax strategy view for the property - cost segregation, depreciation, and tax planning. Currently a preview surface backed by hardcoded tax data."
+    },
+    "prop.transactions.acquisition": {
+      "whatItIs": "A deal scorecard view for evaluating the property's acquisition - the underwriting summary and scoring used at the buy decision. Currently a preview surface backed by hardcoded scorecard data."
+    },
+    "prop.transactions.disposition": {
+      "whatItIs": "A view for planning the property's sale - disposition candidates and exit analysis. Currently a preview surface backed by hardcoded candidate data."
+    },
+    "prop.transactions.recapitalization": {
+      "whatItIs": "A modeling hub for recapitalization scenarios - restructuring the property's capital stack. Currently a preview surface showing placeholder cards, not a live model."
+    },
+    "prop.transactions.refinance": {
+      "whatItIs": "A hold-sell-refinance analyzer for testing whether to refinance the property's debt. Currently a preview surface showing placeholder cards, not a live calculation."
+    },
+    "quarterlyAssembler": {
+      "whatItIs": "Quarterly Assembler builds one reconciled data packet per property per quarter - the seven blocks behind the investor report's property page, with each value showing its source and whether it is available. It produces the packet, not the report: the only output is a JSON file you download and hand to whoever writes the quarter, and nothing is written back to the platform.",
+      "howItWorks": "Reads get_quarterly_packet for the chosen property and quarter, merges the live entrata_portfolio_occupancy row, and badges the result before export. Packets read Partial today rather than Clean, by construction: the Capital block waits on the distribution engine, Construction Status has no platform source, and five of the seven Leasing fields need snapshot history that is still filling - all of those render as em-dashes, never as numbers. A packet measured against a budget snapshot sealed before the quarter began reads Stale and will not export until you acknowledge it."
+    },
+    "unifiedPortfolioView": {
+      "whatItIs": "Pick a set of properties and read budget variance and occupancy across all of them at once, property by property, with the material misses flagged and a queue for working through them.",
+      "howItWorks": "Resolves your selected properties to their budget codes, then reads the same set-wide variance RPC the per-property variance pages use, so the figures reconcile with each property's own Budget tab."
+    },
+    "usageDashboard": {
+      "whatItIs": "Usage & Time Saved shows how your team actually uses the platform - which surfaces get visited, which actions run, and an estimate of the time saved versus doing the same work by hand.",
+      "howItWorks": "Reads the usage_events telemetry captured as people navigate and act in the app, and converts logged actions into time-saved estimates via per-action equivalents."
+    },
+    "userGuide": {
+      "whatItIs": "The User Guide is a plain-English reference for every surface on the platform - what each page is, whether it is live, and where its data comes from.",
+      "howItWorks": "Joins the platform's surface registry, authored descriptions, and a status manifest derived from the code itself, so the Live/Preview/Planned badges reflect what is actually built."
+    },
+    "workflowAutomation": {
+      "whatItIs": "A preview of automation rules for routine tasks. The rules shown are sample data and do not run any real automations yet."
+    },
+    "budgetAgent": {
+      "whatItIs": "Budget Agent lets you describe a forecast change in plain language - typed or dictated - and proposes the exact line-item edits it would make, which you review before anything is applied.",
+      "howItWorks": "Sends your request to a server-side agent that returns a typed change-set, then runs the same dry-run, confirm, apply and undo flow as Portfolio Assumptions, so no change lands without your explicit confirmation."
+    },
+    "changeLog": {
+      "whatItIs": "Change Log is the audit trail of every user-made change on the platform - what changed, from what to what, by whom and when - exportable to Excel, CSV or PDF.",
+      "howItWorks": "Reads the budget-assumption, itemized-edit, rent-roll-adjustment, rent-roll-version, budget-sealing and Entrata write-back trails into one filterable list; exports route through the platform's export-governance layer."
+    }
+  }
+}

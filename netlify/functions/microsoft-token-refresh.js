@@ -1,0 +1,289 @@
+import { applySecurity, jsonResponse } from "./_security.js";
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const ANON_KEY =
+  process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+
+const AZURE_FETCH_TIMEOUT_MS = 10_000;
+
+const TERMINAL_AZURE_ERRORS = new Set([
+  "invalid_grant",
+  "interaction_required",
+  "consent_required",
+  "invalid_client",
+  "unauthorized_client",
+]);
+
+async function sr(path, { method = "GET", body = null, prefer = null } = {}) {
+  const headers = {
+    apikey: SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (prefer) headers.Prefer = prefer;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+  return { ok: res.ok, status: res.status, body: json, raw: text };
+}
+
+async function resolveUserProfile(userJwt) {
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_profiles?select=id,org_id&limit=1`,
+    {
+      headers: {
+        apikey: ANON_KEY,
+        Authorization: `Bearer ${userJwt}`,
+        Accept: "application/json",
+      },
+    },
+  );
+  const text = await r.text();
+  let rows = null;
+  try {
+    rows = JSON.parse(text);
+  } catch {}
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return { userId: rows[0].id, orgId: rows[0].org_id };
+}
+
+async function postToAzureToken(tokenUrl, body) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), AZURE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {}
+    return { ok: response.ok, status: response.status, data };
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      return {
+        ok: false,
+        status: 504,
+        data: {
+          error: "timeout",
+          error_description: "Azure /token request timed out",
+        },
+      };
+    }
+    return {
+      ok: false,
+      status: 502,
+      data: {
+        error: "network",
+        error_description: err?.message || "fetch failed",
+      },
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export const handler = async (event) => {
+  const gate = await applySecurity(event, {
+    methods: ["POST"],
+    requireAuth: true,
+    rateLimit: { maxPerMinute: 30 },
+  });
+  if (gate.error) return gate.error;
+
+  try {
+    const clientId =
+      process.env.VITE_MS_CLIENT_ID || "3acf08d4-96db-4658-a210-8378a4b509ea";
+    const clientSecret = process.env.MS_CONFIDENTIAL_CLIENT_SECRET || "";
+    const tenantId = process.env.VITE_MS_TENANT_ID || "organizations";
+
+    if (!clientId || !SERVICE_ROLE_KEY || !SUPABASE_URL) {
+      console.error(
+        "[microsoft-token-refresh] Missing env (clientId / SERVICE_ROLE_KEY / SUPABASE_URL)",
+      );
+      return jsonResponse(500, { error: "Server not configured" });
+    }
+    if (!clientSecret) {
+      console.error(
+        "[microsoft-token-refresh] Missing MS_CONFIDENTIAL_CLIENT_SECRET env var",
+      );
+      return jsonResponse(500, {
+        error: "Server not configured for confidential-client refresh",
+      });
+    }
+
+    const authHeader =
+      event.headers?.authorization || event.headers?.Authorization || "";
+    const userJwt = authHeader.replace(/^Bearer\s+/i, "");
+    const profile = await resolveUserProfile(userJwt);
+    if (!profile?.userId) {
+      return jsonResponse(403, {
+        error: "No user_profiles row for this Supabase user",
+      });
+    }
+
+    const rowRes = await sr(
+      `/user_ms_integrations?user_id=eq.${encodeURIComponent(profile.userId)}` +
+        `&select=id,user_id,refresh_token_encrypted,revoked_at&limit=1`,
+    );
+    if (!rowRes.ok || !Array.isArray(rowRes.body) || !rowRes.body.length) {
+      return jsonResponse(404, {
+        error: "Not connected to Microsoft",
+        reauth: true,
+      });
+    }
+    const row = rowRes.body[0];
+    if (row.revoked_at) {
+      return jsonResponse(410, {
+        error: "Microsoft connection revoked",
+        reauth: true,
+      });
+    }
+    if (!row.refresh_token_encrypted) {
+      return jsonResponse(404, {
+        error: "No refresh token stored",
+        reauth: true,
+      });
+    }
+
+    const decRes = await sr("/rpc/ms_decrypt_refresh_token", {
+      method: "POST",
+      body: { ciphertext: row.refresh_token_encrypted },
+    });
+    if (!decRes.ok || typeof decRes.body !== "string" || !decRes.body.length) {
+      console.error(
+        "[microsoft-token-refresh] Decrypt failed:",
+        decRes.status,
+        decRes.raw,
+      );
+      return jsonResponse(500, { error: "Failed to decrypt refresh token" });
+    }
+    const refreshToken = decRes.body;
+
+    const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+    const params = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    });
+    const { ok, status, data } = await postToAzureToken(
+      tokenUrl,
+      params.toString(),
+    );
+
+    if (!ok) {
+      const errorCode = data?.error || "unknown";
+      const errorDesc = data?.error_description || "";
+      console.error(
+        "[microsoft-token-refresh] Azure error:",
+        status,
+        errorCode,
+        errorDesc.slice(0, 200),
+      );
+
+      const isSpaCap = /AADSTS700084/.test(errorDesc);
+      const needsReauth = TERMINAL_AZURE_ERRORS.has(errorCode) || isSpaCap;
+
+      if (needsReauth) {
+        await sr(`/user_ms_integrations?id=eq.${encodeURIComponent(row.id)}`, {
+          method: "PATCH",
+          body: {
+            refresh_token_encrypted: null,
+            last_refresh_error: `${errorCode}: ${errorDesc}`.slice(0, 500),
+            last_error_at: new Date().toISOString(),
+            revoked_at: new Date().toISOString(),
+          },
+        });
+        return jsonResponse(410, {
+          error: "Refresh failed",
+          reauth: true,
+        });
+      }
+
+      await sr(`/user_ms_integrations?id=eq.${encodeURIComponent(row.id)}`, {
+        method: "PATCH",
+        body: {
+          last_refresh_error: `${errorCode}: ${errorDesc}`.slice(0, 500),
+          last_error_at: new Date().toISOString(),
+        },
+      });
+      return jsonResponse(503, {
+        error: "Refresh failed",
+        reauth: false,
+      });
+    }
+
+    let rotated = false;
+    if (data.refresh_token && data.refresh_token !== refreshToken) {
+      const encRes = await sr("/rpc/ms_encrypt_refresh_token", {
+        method: "POST",
+        body: { plaintext: data.refresh_token },
+      });
+      if (encRes.ok) {
+        const updRes = await sr(
+          `/user_ms_integrations?id=eq.${encodeURIComponent(row.id)}`,
+          {
+            method: "PATCH",
+            body: {
+              refresh_token_encrypted: encRes.body,
+              last_refreshed_at: new Date().toISOString(),
+              last_refresh_error: null,
+              last_error_at: null,
+            },
+          },
+        );
+        if (!updRes.ok) {
+          console.error(
+            "[microsoft-token-refresh] Rotation update failed:",
+            updRes.status,
+            updRes.raw,
+          );
+        } else {
+          rotated = true;
+        }
+      } else {
+        console.error(
+          "[microsoft-token-refresh] Rotation encrypt failed:",
+          encRes.status,
+          encRes.raw,
+        );
+      }
+    } else {
+      await sr(`/user_ms_integrations?id=eq.${encodeURIComponent(row.id)}`, {
+        method: "PATCH",
+        body: {
+          last_refreshed_at: new Date().toISOString(),
+          last_refresh_error: null,
+          last_error_at: null,
+        },
+      });
+    }
+
+    return jsonResponse(200, {
+      access_token: data.access_token,
+      expires_in: data.expires_in,
+      token_type: data.token_type,
+      scope: data.scope,
+      rotated,
+    });
+  } catch (err) {
+    console.error("[microsoft-token-refresh] Unexpected error:", err);
+    return jsonResponse(500, { error: "Internal error" });
+  }
+};

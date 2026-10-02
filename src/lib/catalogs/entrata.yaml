@@ -1,0 +1,2172 @@
+vendor: entrata
+schema_version: 1
+last_reviewed: '2026-05-21'
+auth:
+  primary:
+    mode: partner_gateway
+    base_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1
+    base_url_template_eu: https://apis.entrata.global/ext/orgs/{subdomain}/v1
+    header: 'X-Api-Key: <api_key>'
+    notes: |
+      Partner-tier path used by this platform. The API key is captured per-org via
+      the admin-only entrata-connect.js Netlify function, encrypted server-side
+      via the entrata_encrypt_api_key() Supabase RPC, and stored in
+      org_entrata_accounts.api_key_encrypted. Decryption happens server-side at
+      sync time only — the key never reaches the browser.
+  fallback:
+    mode: public_portal
+    base_url_template: https://{subdomain}.entrata.com/api/v1
+    header: 'Authorization: Basic <base64(user:password)>'
+    notes: |
+      Public developer-portal flavor, used by integrators that authenticate with
+      HTTP Basic instead of a partner API key. This platform does not use this
+      path today; the auth header shape and the per-method route ("/api/customers"
+      vs "/v1/customers", lowercase plural) differ from the partner gateway and
+      are NOT drop-in compatible. Documented here for completeness.
+  oauth_app_store:
+    mode: bearer_token
+    token_endpoint: https://sync.entrata.com/api/oauth
+    service_url_template: https://{subdomain}.entrata.com/api/{service}
+    header: 'Authorization: Bearer <access_token>'
+    notes: |
+      OAuth 2.0 flow used by published Entrata App Store apps. Not in scope for
+      this platform; documented because the App Store technical docs are the
+      most reliable public surface for sample request bodies.
+rate_limits:
+  documented_quota: |
+    One (1) call to the API per client per property per minute per web service,
+    not to exceed 2,500 calls in a twenty-four (24) hour period. Verbatim from
+    the Entrata API Developer Interface Agreement section 4.
+
+    This is the CONTRACT text, not what the gateway actually enforces — see
+    measured_quota below. Treat it as the ceiling you are contractually
+    entitled to complain about, not as the number to engineer against.
+  measured_quota: |
+    Entrata's live rate limits are bucketed PER METHOD, not per tenant. Every
+    API method carries its own day / hour / minute allowance, and a method's
+    own x-ratelimit-limit response header is the only authority for that
+    method's bucket. There is no single account-wide ceiling to engineer
+    against.
+
+    Buckets as reported by x-ratelimit-limit response headers for this
+    tenant:
+
+      financial.getGlTransactions      10000/day;   6000/hour;   150/minute
+      vendors.getInvoices               5000/day;    300/hour;   200/minute
+      financial.getFinancialPickList    1000/day;    150/hour;    60/minute
+      artransactions.getArInvoices      1000/day;    100/hour;    60/minute
+
+    Note how little those have in common. The hourly allowance spans 100 to
+    6000 — a 60x range across four methods on the same account — and the
+    minute allowance does not track the hourly one: vendors.getInvoices
+    permits 200/minute against only 300/hour, so it tolerates a short burst
+    but not a sustained walk. Any method not listed above is UNMEASURED. Read
+    its own header before sizing anything against it; do not interpolate from
+    a sibling method.
+
+    Do not design against an asserted Entrata ceiling of "60 requests per minute" and "100 per hour".
+    The 60/minute number came only from the prose inside a 429 response body
+    ("You reached the limit of 60 requests per 1 minutes"), never from an
+    advertised limit, and it is not a design constant.
+
+    Practical consequence for sync design: budget PER METHOD, not per sync. A
+    resource whose adapter entry sets iterate_per_property fires at least one
+    call per property (more with pagination) against a SINGLE method's bucket,
+    so it can exhaust that method on its own while every other method on the
+    account stays untouched. A "total calls per sync" figure says nothing
+    about whether any individual resource will 429. Do not size a client-side
+    throttle off any fixed number — drive pacing off the live x-ratelimit-*
+    headers returned by the call actually being made, which is what the
+    adapter does.
+  enforcement: |
+    The platform captures Entrata's X-RateLimit-Minute-Remaining / Hour / Day
+    response headers on every call and persists them to
+    org_entrata_accounts.rl_minute_remaining / hour / day so the admin UI can
+    warn before the cap is hit.
+
+    Exceedance is NOT silent — Entrata returns HTTP 429 with Entrata error
+    code 1429 and a human-readable message. No Retry-After header is
+    returned.
+  retry_stance: |
+    The adapter retries TypeError-class network failures (TCP/TLS reset, DNS
+    flakes) up to 3 times with 400ms * attempt^2 backoff. HTTP non-2xx
+    responses pass through to the caller; no automatic retry on 4xx or 5xx
+    because Entrata occasionally returns 500 for genuine validation errors
+    that re-running will not fix.
+  ip_whitelisting: |
+    Per the API Developer Interface Agreement section 5, Entrata whitelists
+    the developer's egress IP address(es) before access works. Netlify
+    Functions on the standard tier do not have static egress IPs, so
+    production traffic depends on either Netlify Enterprise, a fixed-IP
+    relay, or a partner-level allowlist exception covering Netlify's pools.
+request_envelope:
+  shape: |
+    All Entrata RPC calls use a JSON envelope:
+      {
+        "auth": { "type": "apikey" },
+        "requestId": <integer; unused for correlation server-side, but required>,
+        "method": {
+          "name": "<methodName>",
+          "version": "<r1|r2|r3>",
+          "params": { ... }
+        }
+      }
+    Some paginated endpoints (getLeases, getInvoices) accept top-level
+    `page_no` and `per_page` parameters outside the method envelope; the
+    adapter sends these as siblings of `method`, not inside `params`.
+  content_type: application/json; charset=utf-8
+  response_unwrap_pattern: |
+    Successful responses nest data under `response.result.<methodSpecificPath>`.
+    The exact path varies by method and sometimes by tenant (PascalCase
+    vs lowerCamelCase, plural vs singular wrapper). The adapter records the
+    top-level keys of the first empty response per resource into the diag
+    payload so resultPath mismatches surface without a separate audit pass.
+  date_format: MM/DD/YYYY for most params (not ISO 8601). Verify per method via the relevant pickList.
+  pagination: Page-number + page-size when paginated. No cursors.
+endpoints:
+  - endpoint_name: get_status
+    vendor_method: getStatus
+    endpoint_group: system
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/status
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: 1
+      method:
+        name: getStatus
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns a small health envelope confirming the API is reachable and the
+      credentials are valid. The platform's entrata-connect.js uses this as a
+      credential-validation probe at connect time.
+    plain_english_description: |
+      The liveness probe for Entrata's API. Call this before a batch run to
+      confirm the API is up, the gateway is routing correctly, and the
+      provisioned API key still authenticates. Used by the platform's
+      entrata-connect.js function to validate newly captured credentials
+      before persisting them — if this returns 200, the rest of the sync
+      pipeline will at least reach Entrata. The response payload itself is
+      uninteresting; what matters is the HTTP status and the timing.
+    use_cases:
+      - health_check
+      - credential_validation
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    notes: |
+      Called inline by entrata-connect.js (not via the adapter's resource
+      dispatch). Excluded from the scheduled sweep because there is nothing
+      to persist; a credential failure would show up on the next real sync
+      anyway.
+  - endpoint_name: get_properties
+    vendor_method: getProperties
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getProperties
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns one row per property the credential has access to:
+      { PropertyID, MarketingName, ShortDescription, Website, Phone, Email,
+        Address: { Address, City, StateCode, PostalCode, Country },
+        YearBuilt, NumberOfUnits, IsDisabled, Type }.
+      Top-level wrapper varies by tenant — PhysicalProperty.Property (most
+      common) or properties.property (alternate). The platform's pickArray
+      helper tries both.
+    plain_english_description: |
+      The seed call for everything else in the catalog. Returns the management
+      company's full property roster — IDs, marketing names, addresses, unit
+      counts, disabled-state. Every other read-side endpoint takes a
+      propertyId or propertyIds parameter, so the platform syncs this first
+      and gates subsequent resource pulls behind a "no entrata_properties
+      rows yet" loud error. The response shape is mixed-case (PascalCase
+      Address with camelCase fallbacks); the adapter normalizes both. It is
+      cheap (single call, no pagination) and safe to refresh frequently.
+    use_cases:
+      - property_roster
+      - tenant_onboarding
+      - portfolio_summary
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: entrata_properties
+    sync_status: active
+    live_example_response_redacted: |
+      {
+        "response": {
+          "result": {
+            "PhysicalProperty": {
+              "Property": [
+                { "PropertyID": "12345", "MarketingName": "12 Panoramic",
+                  "Address": { "Address": "12 Panoramic Way", "City": "...",
+                               "StateCode": "...", "PostalCode": "..." },
+                  "NumberOfUnits": 8, "Type": "Multi-Family" }
+              ]
+            }
+          }
+        }
+      }
+    adapter_quirks: |
+      No pagination. Dual resultPath (PhysicalProperty.Property primary,
+      properties.property fallback). Normalizes mixed PascalCase / camelCase
+      key shapes. Coerces IsDisabled (string "true" or boolean true to bool).
+  - endpoint_name: get_property_units
+    vendor_method: getPropertyUnits
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/propertyunits
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getPropertyUnits
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+    response_shape_summary: |
+      Returns property -> floorplans -> unit types -> units, including unit
+      number, bedrooms, bathrooms, square footage, building name, and a
+      nested unitSpaces array carrying per-bedroom market rent. The adapter
+      sums marketRent across unitSpaces to compute a single market-rent
+      figure per unit.
+    plain_english_description: |
+      The unit-level structural call. Returns every unit on the requested
+      property, with the metadata (bedrooms, bathrooms, square footage,
+      market rent, building name) needed to populate the platform's
+      unit-inventory tables. Distinct from get_leases — this is the static
+      unit roster; lease-level occupancy and tenant identity come from
+      get_leases joined back on unit_id. Note that Entrata limits this
+      method to one propertyId per call (not propertyIds[] despite the
+      param name), so a portfolio refresh iterates the property list
+      sequentially with a short per-property delay to avoid TLS resets.
+    use_cases:
+      - unit_inventory
+      - market_rent_baseline
+      - capacity_planning
+      - rent_roll_composition
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_units
+    sync_status: active
+    live_example_response_redacted: |
+      {
+        "response": {
+          "result": {
+            "properties": {
+              "property": [
+                { "id": "12345",
+                  "units": {
+                    "unit": [
+                      { "id": "9001", "unitNumber": "101", "numberOfBedrooms": 2,
+                        "squareFeet": 1100, "buildingName": "A",
+                        "unitSpaces": { "unitSpace": [
+                          { "marketRent": 1800 }, { "marketRent": 1800 }
+                        ] } }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    adapter_quirks: |
+      Per-property iteration with 120ms throttle between calls. Response
+      nests under properties.property[].units.unit[] in lowerCamelCase. Market rent is summed
+      across the unitSpaces array (one space per bedroom) rather than read
+      from a single column.
+  - endpoint_name: get_property_pick_lists
+    vendor_method: getPropertyPickLists
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getPropertyPickLists
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns the ID-to-name enumeration tables that other Properties-service
+      responses reference: unit type IDs, status IDs, building IDs,
+      floorplan IDs.
+    plain_english_description: |
+      The lookup-tables call for the Properties service. Other endpoints
+      reference unit-type IDs, status IDs, and building IDs without spelling
+      out the name; this call returns the mapping. Call once at integration
+      bootstrap (or whenever the management company adds a new unit type)
+      and cache the result. Not needed for the current sync —
+      property and unit data already arrives with names attached — but
+      becomes necessary when consuming raw IDs from getPropertyUnits' more
+      detailed sub-objects.
+    use_cases:
+      - id_resolution
+      - enum_caching
+      - reporting_dimensions
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: false
+  - endpoint_name: get_phone_number
+    vendor_method: getPhoneNumber
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getPhoneNumber
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+    response_shape_summary: |
+      Returns the marketing and leasing-center phone numbers configured per
+      property.
+    plain_english_description: |
+      Surfaces the marketing-side phone numbers used in lead-routing and
+      call-tracking. Useful when integrating with a separate call-tracking
+      provider that needs to know which Entrata-managed phone number maps
+      to which property. Not on the rent-roll critical path; not synced
+      today.
+    use_cases:
+      - call_tracking
+      - marketing_attribution
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_amenity_reservations
+    vendor_method: getAmenityReservations
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getAmenityReservations
+        version: r1
+        params:
+          propertyId: '{property_id}'
+    response_shape_summary: |
+      Returns scheduled amenity reservations (clubhouse, fitness room, pool,
+      etc.) per property with reservation window, reserving customer, and
+      status.
+    plain_english_description: |
+      The reservation log for shared amenities — clubhouses, fitness rooms,
+      grills, business centers. Useful for operations dashboards showing
+      amenity utilization or for billing surcharges tied to reservations.
+      Not on the financial reporting or rent-roll path; carried in the
+      catalog for future ops-side surfaces.
+    use_cases:
+      - amenity_utilization
+      - operations_dashboard
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_floor_plans
+    vendor_method: getFloorPlans
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getFloorPlans
+        version: r1
+        params:
+          propertyId: '{property_id}'
+    response_shape_summary: |
+      Returns the floor plans (unit layouts) configured for a property:
+      floor-plan name plus bedroom/bathroom counts and square footage. Rows
+      live at FloorPlans.FloorPlan (PascalCase primary; floorplans.floorplan
+      is the lowercase fallback shape). The per-row floor-plan ID lives at
+      Identification.IDValue, not @attributes.Id.
+    plain_english_description: |
+      The per-property floor-plan roster — the structural unit layouts a
+      property offers (e.g. "2 Bed | 2 Bath", "Studio"). Distinct from
+      get_property_pick_lists, which only returns the floor-plan ID-to-name
+      enumeration as one of several lookup arrays; this call returns the full
+      floor-plan objects. Must be called per-property with the singular
+      propertyId param — both the org-level "params: {}" shape and the plural
+      propertyIds shape return Entrata error 302 "Request parameters are
+      missing". Synced into the entrata_property_meta catch-all table under
+      kind='floor_plan' via the mapEntrataFloorPlanToRow mapper, through the
+      adapter resource property_meta_floor_plans.
+    use_cases:
+      - unit_structure
+      - floor_plan_reporting
+      - rent_roll_enrichment
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: entrata_property_meta
+    sync_status: defined
+  - endpoint_name: send_rentable_items
+    vendor_method: sendRentableItems
+    endpoint_group: properties
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/properties
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendRentableItems
+        version: r1
+        params:
+          propertyId: '{property_id}'
+          rentableItems: '{rentable_items_array}'
+    response_shape_summary: |
+      Returns confirmation of inserted/updated rentable-item rows (parking
+      spots, storage, pet add-ons) along with any per-item errors.
+    plain_english_description: |
+      A write-mode endpoint that pushes rentable-item definitions (parking
+      stalls, storage units, pet add-ons) into Entrata. Not wired; carried
+      as the write-side counterpart for a future write-side feature backed
+      by Entrata. Never call this from a sync sweep.
+    use_cases:
+      - property_setup
+      - rentable_inventory_management
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_unit_availability
+    vendor_method: getUnitsAvailabilityAndPricing
+    endpoint_group: units
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/propertyunits
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getUnitsAvailabilityAndPricing
+        version: r1
+        params:
+          propertyId: '{property_id}'
+          arePricesRequired: 'true'
+    response_shape_summary: |
+      Returns a point-in-time snapshot of unit availability and dynamic
+      pricing for each unit on the property: unit, status (vacant / leased /
+      notice / leased-not-occupied), available date, advertised rate, and
+      any active concessions.
+    response_shape_verified: |
+      The envelope is MITS/ILS-shaped with exactly TWO top-level result
+      keys:
+
+        response.result.Properties.Property[]   -- floorplan-grain marketing
+            data (PropertyId, MarketingName, currencyCode,
+            propertyAvailabilityURL, Floorplans.Floorplan[]). NO unit rows.
+        response.result.ILS_Units.Unit          -- the unit-grain data, as a
+            keyed OBJECT MAP whose keys are PropertyUnitIds, NOT an array.
+
+      Each unit node is
+        { "@attributes": { UnitNumber, FloorPlanName, Availability
+              ("Available" | "Not Available"), Status ("Vacant Ready
+              (Available)" | "Vacant Not Ready (Unavailable)" | "Occupied
+              (Unavailable)" | "On Notice (Available)" | "On Notice
+              (Unavailable)"), AvailableOn (MM/DD/YYYY), MakeReadyDate,
+              FloorplanId, UnitTypeId, PropertyUnitId, PropertyId, FloorId,
+              FloorNumber, BuildingId, BuildingName, OccupancyType,
+              IsAffordable, HasPricing, WebVisible, Area ("271.0000
+              SquareFeet") },
+          "Rent":    { TermRent: [{ "@attributes": { Rent, BaseRent } }],
+                       "@attributes": { MinRent, MaxRent } },
+          "Deposit": { "@attributes": { MinDeposit, MaxDeposit } } }
+
+      There is NO concessions block on this tenant's response, and no
+      per-term label on TermRent (exactly one TermRent entry per unit).
+      PropertyUnitId is the same id space as entrata_units.unit_id, so
+      availability joins the unit roster directly.
+
+      CAVEAT -- pricing is zeroed on this tenant. Every unit carries a
+      complete Rent block, and the entire Rent subtree contains exactly FOUR
+      distinct scalar leaves -- MinRent, MaxRent, TermRent[].Rent,
+      TermRent[].BaseRent -- every one of them the string "0.00". True for
+      HasPricing="1" and HasPricing="0" units alike, available and occupied
+      alike. Sending the documented arePricesRequired: "true" param changes
+      nothing (byte-identical response).
+
+      Consequence for the adapter: asking_rent is NULL on 100% of rows for
+      this tenant, by design. 0 in this feed means "no rate published", not
+      "this unit is free"; persisting the 0 would read downstream as a 100%
+      loss-to-lease on every unit. lease_term_months and concession_amount
+      are likewise NULL on 100% of rows because neither field exists in the
+      envelope -- TermRent carries only Rent and BaseRent (no term label, id
+      or month count), and every unit node's key set is exactly
+      ["@attributes", "Rent", "Deposit"] with no concessions block.
+
+      Do NOT substitute the floorplan-grain MarketRent from the Properties
+      branch of this same response. The FloorplanId join is clean, but the
+      Min/Max range spans shared-by-bed to entire-unit pricing and can reach
+      roughly 10x within one floorplan. Pushing either end down to unit
+      grain invents a number.
+
+      Real unit-grain market rent lives on get_property_units, which carries
+      non-zero values: units[].unitSpaces.unitSpace[].marketRent and the sibling
+      unitSpaces[].rent.termRent[] array, which unlike the ILS feed DOES
+      carry leaseTermId / leaseTerm ("10 Months") / leaseTermName /
+      spaceOption and non-zero rent + baseRent. Loss-to-lease and the
+      renewal trade-out column must source market rent there until ILS
+      pricing is configured in the tenant's Entrata.
+    plain_english_description: |
+      The forward-looking availability and revenue-management feed.
+      get_property_units returns the static unit roster (bedrooms, square
+      footage, base market rent); this returns what each unit is being
+      offered for TODAY, including any LRO / RealPage-style dynamic
+      pricing or one-off concessions. Use this when building a
+      pricing-analysis surface or a forward-occupancy projection.
+      Note the snapshot semantics — entrata_unit_availability is append-only
+      in the schema (as_of timestamp on every row) so the platform can
+      reconstruct historical pricing curves. Method name is the most
+      common one in the wild but verify the exact spelling and version
+      with Entrata partner support before wiring an adapter handler.
+    use_cases:
+      - availability_snapshot
+      - revenue_management
+      - forward_occupancy
+      - pricing_history
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_unit_availability
+    sync_status: defined
+    verify_with_partner: true
+  - endpoint_name: get_leases
+    vendor_method: getLeases
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeases
+        version: r1
+        params:
+          propertyId: '{property_id}'
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns one row per lease with: leaseId, unitId, unitNumber, status,
+      lease_start_date, lease_end_date, move_in_date, move_out_date, rent,
+      deposit, primary_customer (nested object with id, name, email),
+      leaseInterval (status + dates), scheduledCharges (array of recurring
+      charges including Base Rent and Security Deposit), is_mtm flag.
+      With leaseStatusTypeIds omitted the rows are Current + Notice ONLY
+      (see plain_english_description) — not the full status spread.
+    plain_english_description: |
+      The platform's primary lease-level fact source — the table this
+      writes to (entrata_leases) is what every rent-roll surface ultimately
+      joins back on.
+
+      Omitting leaseStatusTypeIds does NOT return every status. It returns
+      ONLY status ids 4 (Current) and 5 (Notice), so every row in
+      entrata_leases carries raw->>'leaseStatusTypeId' of 4 or 5. Past,
+      Future, Applicant and Cancelled leases exist in Entrata but are never
+      ingested on the omitted-filter call, so a pre-lease / future-lease
+      report built on that data reads empty.
+
+      The full per-tenant vocabulary, from getLeasePickList
+      (POST /v1/leases, method getLeasePickList, params {}):
+
+        1 = Applicant
+        2 = Cancelled
+        3 = Future
+        4 = Current
+        5 = Notice
+        6 = Past
+
+      That is the complete set. There is NO "Evicted" status id, and
+      requesting ids beyond 6 trips Entrata error 306. Evictions and skips
+      are carried in the separate leaseSubStatus TEXT field (for example
+      "Eviction, Month To Month" and "Skip, Month To Month"), and a dedicated
+      getEvictedLeases method exists for the eviction population. So
+      "past / skip / termination / eviction" maps to id 6 plus
+      leaseSubStatus filtering, never to distinct status ids.
+
+      Filter on leaseStatusTypeId, not on dates: a future-lease report
+      keyed on lease_start_date > current_date both misses Future leases
+      whose start date has passed and wrongly includes future-dated
+      Cancelled rows.
+
+      Pagination is offset-based, 500 per page; the adapter caps at page
+      200 as a safety. One
+      lease can appear multiple times within a page when a co-applicant is
+      attached to multiple leases on one property, so the adapter dedupes
+      same-batch on (org_id, lease_id) with last-write-wins before upsert
+      to avoid Postgres cardinality_violation on ON CONFLICT DO UPDATE.
+    use_cases:
+      - rent_roll
+      - tenant_directory
+      - occupancy
+      - lease_expiration_pipeline
+      - mtm_identification
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_leases
+    sync_status: active
+    live_example_response_redacted: |
+      {
+        "response": {
+          "result": {
+            "leases": {
+              "lease": [
+                { "id": "55501", "unitId": "9001", "unitNumber": "101",
+                  "leaseStatus": "Current",
+                  "leaseStartDate": "01/15/2025",
+                  "leaseEndDate": "01/14/2026",
+                  "customers": { "customer": [
+                    { "customerType": ["Primary"],
+                      "@attributes": { "Id": "1091957" },
+                      "FirstName": "Jane", "LastName": "Doe",
+                      "MoveInDate": "01/15/2025" }
+                  ] },
+                  "scheduledCharges": { "scheduledCharge": [
+                    { "chargeCode": "Base Rent", "amount": "1800.00" },
+                    { "chargeCode": "Security Deposit", "amount": "1800.00" }
+                  ] }
+                }
+              ]
+            }
+          }
+        }
+      }
+    adapter_quirks: |
+      Per-property iteration, paginated (page_no=1..N, per_page=500).
+      Primary customer is selected via customerType="Primary" filter
+      (not first-in-array). Base Rent / Security Deposit are parsed from
+      the scheduledCharges array with case-insensitive chargeCode match,
+      with fallback to flat v.Rent / v.Deposit for legacy lease shapes.
+      MoveInDate lives on the primary customer object, not the lease
+      wrapper. is_mtm is a string-or-bool coerced field.
+  - endpoint_name: get_lease_details
+    vendor_method: getLeaseDetails
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeaseDetails
+        version: r2
+        params:
+          propertyId: '{property_id}'
+          leaseIds: '{lease_id_csv}'
+    response_shape_summary: |
+      Returns a heavyweight, per-lease detail object: full charge schedule
+      across the lease term, concessions, addenda, document list metadata,
+      pet info, vehicle info, renewal offer status, and a deeper
+      leaseInterval history. Significantly more verbose than get_leases.
+    plain_english_description: |
+      The deep-detail per-lease call, intended for one-off pulls when the
+      lightweight get_leases row is not enough — e.g., building a tenant
+      profile view or auditing a single concession schedule. Do NOT call
+      this in a sync sweep across hundreds of leases; the response size
+      and per-lease rate-limit cost are both prohibitive. Schema table
+      entrata_lease_details exists anticipating an on-demand
+      pull pattern, not a full-portfolio sync. Method is r2 in the wild;
+      r1 and r3 ship different field shapes and the platform should pin
+      explicitly when wiring this.
+    use_cases:
+      - lease_audit
+      - tenant_profile
+      - concession_history
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_lease_details
+    sync_status: defined
+  - endpoint_name: get_lease_activity
+    vendor_method: getLeaseActivities
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeaseActivities
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          activityDateFrom: '{MM/DD/YYYY}'
+          activityDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns an event log for each lease in the window: notices given,
+      lease signed, move-ins, move-outs, status transitions, addendum
+      additions, with a timestamp and the user / system that performed it.
+    plain_english_description: |
+      The lease-event audit log — useful for "what happened on this lease
+      in the last 30 days" surfaces, leasing-team activity tracking, or
+      reconciling a status-change discrepancy. Distinct from get_leases
+      (state-as-of-now) and get_lease_details (point-in-time deep snapshot)
+      — this is the time-series of state changes. Schema table
+      entrata_lease_activity exists but no adapter handler yet. Method
+      name and exact version need partner-support verification before
+      wiring; the documented public surface for this exact shape is thin.
+    use_cases:
+      - lease_audit
+      - leasing_team_activity
+      - status_change_history
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_lease_activity
+    sync_status: defined
+    verify_with_partner: true
+  - endpoint_name: get_expiring_leases
+    vendor_method: getExpiringLeases
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getExpiringLeases
+        version: r1
+        params:
+          propertyId: '{property_id}'
+          expirationDateFrom: '{MM/DD/YYYY}'
+          expirationDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns leases whose end date falls in the requested window, with
+      tenant name, unit number, current rent, days-to-expiration, and
+      renewal-offer status if one has been generated.
+    plain_english_description: |
+      The renewal-pipeline call. Functionally a narrowly-filtered
+      get_leases — same row shape, filtered by lease_end_date in the
+      requested window. Useful when you want the renewals queue without
+      pulling every lease and filtering client-side; rate-limit-friendlier
+      for narrow windows. Schema table entrata_expiring_leases is the
+      target. Use this for "leases expiring next 30/60/90 days" alerts
+      and renewal-offer workflows.
+    use_cases:
+      - renewal_pipeline
+      - retention_alerts
+      - lease_expiration_pipeline
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_expiring_leases
+    sync_status: defined
+  - endpoint_name: get_lease_pick_list
+    vendor_method: getLeasePickList
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeasePickList
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns the lease-service enumeration tables. On this tenant the
+      response contains exactly these collections: leaseStatusTypes,
+      leaseFileTypes, chargeTimings, chargeCodeTypes, eventTypes, petTypes,
+      refundMethods.
+
+      The response does NOT carry leaseSubStatusTypes, cancel-reason codes
+      or notice-reason codes. Do not plan a cancelReasonId / noticeReasonId
+      enum cache off this method; the source for those is not known.
+    plain_english_description: |
+      The lookup-table call for the Leases service. Important because
+      leaseStatusTypeIds are per-tenant in Entrata — the IDs differ
+      between management companies, and passing wrong values causes
+      Entrata error 306. Call this once at integration bootstrap to learn
+      the tenant's mapping, cache the result, and use it for any future
+      filtered queries.
+
+      This tenant's mapping: 1 Applicant,
+      2 Cancelled, 3 Future, 4 Current, 5 Notice, 6 Past. There is no
+      "Evicted" id (evictions live in the leaseSubStatus TEXT field; a
+      separate getEvictedLeases method exists). Note that omitting the
+      leaseStatusTypeIds filter on getLeases does NOT return all statuses
+      — it returns ids 4 and 5 only, so the filter has to be supplied
+      explicitly to reach Past or Future leases. See the get_leases entry.
+    use_cases:
+      - id_resolution
+      - enum_caching
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_lease_documents_list
+    vendor_method: getLeaseDocumentsList
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeaseDocumentsList
+        version: r1
+        params:
+          propertyId: '{property_id}'
+    response_shape_summary: |
+      Returns metadata for every lease-attached document on a property:
+      documentId, filename, file size, MIME type, related leaseId,
+      uploaded-by user, uploaded-at timestamp. Does not return the
+      document binary.
+    plain_english_description: |
+      The two-call pattern for lease documents starts here. This returns
+      the metadata roster — which lease has which documents attached, with
+      their IDs. To fetch the actual file binary, follow with
+      get_lease_documents on the documentId of interest. Splitting the
+      pattern avoids pulling multi-megabyte PDFs for documents you do not
+      need. Useful for building a document-library view scoped to a
+      property or a specific lease.
+    use_cases:
+      - document_library
+      - lease_audit
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_lease_documents
+    vendor_method: getLeaseDocuments
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeaseDocuments
+        version: r1
+        params:
+          documentIds: '{document_id_csv}'
+    response_shape_summary: |
+      Returns the binary content of the requested documents, base64-encoded
+      in the JSON response along with the filename and MIME type.
+    plain_english_description: |
+      The follow-up to get_lease_documents_list — call this with specific
+      documentIds to fetch the actual PDF or image. Responses are large
+      (megabytes of base64), so be mindful of Netlify function memory and
+      response-size limits; for large documents, consider streaming the
+      result to Supabase Storage on the function side and returning a
+      signed URL to the client. Rate-limit-expensive because of payload
+      size, not call count.
+    use_cases:
+      - document_library
+      - lease_audit
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: cancel_lease
+    vendor_method: cancelLease
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: cancelLease
+        version: r1
+        params:
+          leaseId: '{lease_id}'
+          cancelReasonId: '{reason_id}'
+    response_shape_summary: |
+      Returns confirmation of the lease cancellation along with the new
+      lease status and any errors (cancellation may be rejected if the
+      lease is already past or has unsettled balances).
+    plain_english_description: |
+      A write-mode lease-state transition. Cancels a lease entirely (different
+      from put-on-notice — that is on_notice_lease). Use cancelReasonId
+      values learned from get_lease_pick_list. Documented as a high-risk write in this catalog because writes to lease state alter financial truth on
+      the property; never call from an automated sweep. Not wired.
+    use_cases:
+      - lease_lifecycle_management
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: on_notice_lease
+    vendor_method: onNoticeLease
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: onNoticeLease
+        version: r1
+        params:
+          leaseId: '{lease_id}'
+          noticeDate: '{MM/DD/YYYY}'
+          moveOutDate: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns confirmation that the lease has been transitioned to notice
+      status, including the recorded notice date and expected move-out date.
+    plain_english_description: |
+      Transitions a lease to "on notice" — tenant has given notice to
+      vacate but the lease has not ended. Distinct from cancel_lease,
+      which terminates the lease entirely. Notice-state leases continue
+      to bill rent through the noticeDate / moveOutDate window. Like all
+      write methods, never call from an automated sweep.
+    use_cases:
+      - lease_lifecycle_management
+      - notice_workflow
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_lease_activities
+    vendor_method: sendLeaseActivities
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendLeaseActivities
+        version: r1
+        params:
+          leaseId: '{lease_id}'
+          activities: '{activity_array}'
+    response_shape_summary: |
+      Returns per-activity insertion confirmation: activity ID, status,
+      any validation errors.
+    plain_english_description: |
+      The write-side counterpart to get_lease_activity. Pushes activity
+      events (tours, follow-up calls, notices given) onto a lease's
+      history. Useful when integrating an external CRM or call-center
+      tool that owns the canonical activity log and Entrata is the
+      consumer; not relevant when Entrata is the system of record.
+    use_cases:
+      - crm_integration
+      - external_activity_ingest
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_renters_insurance_policies
+    vendor_method: sendRentersInsurancePolicies
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendRentersInsurancePolicies
+        version: r1
+        params:
+          policies: '{policy_array}'
+    response_shape_summary: |
+      Returns per-policy insertion confirmation with policy ID and any
+      validation errors.
+    plain_english_description: |
+      Pushes renters-insurance policy data tied to a lease. Used by
+      insurance-program partners that issue policies outside Entrata and
+      need to surface them inside Entrata for resident-portal display
+      and compliance tracking. Not relevant unless the platform takes on
+      an insurance-integration role.
+    use_cases:
+      - insurance_integration
+      - compliance_tracking
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_roommate_groups
+    vendor_method: sendRoommateGroups
+    endpoint_group: leases
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendRoommateGroups
+        version: r1
+        params:
+          groups: '{group_array}'
+    response_shape_summary: |
+      Returns per-group insertion confirmation with group ID and any
+      validation errors.
+    plain_english_description: |
+      Pushes roommate-group definitions into Entrata's student-housing
+      flow. Multi-resident leases use these groups to coordinate roommate
+      matching and shared-lease behavior. Not relevant for the conventional
+      multifamily portfolio the platform targets today; carried in the
+      catalog for completeness.
+    use_cases:
+      - student_housing
+      - roommate_management
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_customers
+    vendor_method: getCustomers
+    endpoint_group: customers
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/customers
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getCustomers
+        version: r1
+        params:
+          propertyId: '{property_id}'
+    response_shape_summary: |
+      Returns one row per customer (tenant) at the property:
+      { "@attributes": { "Id": "<id>" }, NamePrefix, FirstName, LastName,
+        Email, Phone, DOB, LeaseId, CustomerType: ["Primary" | "CoApplicant"
+        | "Guarantor"], MoveInDate }.
+      Customer ID lives on a nested @attributes sub-object (XML-to-JSON
+      artifact); top level is PascalCase.
+    plain_english_description: |
+      Returns tenant identity records for a property — name, contact info,
+      date of birth, lease attachment. Distinct from get_leases, which
+      embeds a thin "primary customer" object; get_customers returns ALL
+      customers attached to ALL leases on the property, including
+      co-applicants and guarantors. The same customer can appear once per
+      attached lease (a co-applicant on two leases shows up twice on the
+      same page), which is why the adapter dedupes same-batch on
+      (org_id, customer_id) before upsert to avoid Postgres
+      cardinality_violation. Use propertyId (singular) — passing
+      propertyIds (plural) trips Entrata error 303 on every call.
+    use_cases:
+      - tenant_directory
+      - contact_capture
+      - co_applicant_tracking
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_customers
+    sync_status: active
+    live_example_response_redacted: |
+      {
+        "response": {
+          "result": {
+            "Customers": {
+              "Customer": [
+                { "@attributes": { "Id": "1091957" },
+                  "NamePrefix": "Ms.",
+                  "FirstName": "Jane", "LastName": "Doe",
+                  "Email": "...", "LeaseId": { "id": "55501" },
+                  "CustomerType": ["Primary"],
+                  "MoveInDate": "01/15/2025" }
+              ]
+            }
+          }
+        }
+      }
+    adapter_quirks: |
+      Per-property iteration. PascalCase top-level keys with @attributes
+      sub-object for ID. LeaseId is sometimes a nested object
+      {id, "@value"} and sometimes a flat string — adapter normalizes
+      with multi-key fallback. Phone occasionally arrives as nested
+      {Phone.PhoneNumber} and otherwise flat — the adapter normalizes both.
+  - endpoint_name: get_marketing_preferences
+    vendor_method: getMarketingPreferences
+    endpoint_group: customers
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/communications
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getMarketingPreferences
+        params:
+          propertyId: '{property_id}'
+          customerIds: 1234,5678
+          recipientTypeId: '1'
+    response_shape_summary: |
+      Returns each customer's marketing-channel opt-in/opt-out state: email,
+      SMS, postal, phone.
+    plain_english_description: |
+      The compliance and outreach surface. Before sending automated email
+      or SMS to a tenant, check this to honor their stated preferences —
+      both for legal compliance (CAN-SPAM, TCPA) and for retention
+      (over-messaging cancels). Useful when integrating with a marketing
+      tool that lives outside Entrata; not on the rent-roll critical path.
+    use_cases:
+      - marketing_compliance
+      - retention_outreach
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_ar_transactions
+    vendor_method: getLeaseArTransactions
+    endpoint_group: ar
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/artransactions
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeaseArTransactions
+        version: r1
+        params:
+          propertyId: '{property_id}'
+          leaseIds: 1234,5678
+          leaseStatusTypeIds: 3,4
+          transactionTypeIds: 12345,4567
+          arCodeIds: 1234,5678
+          showFullLedger: '1'
+          residentFriendlyMode: '0'
+          includeOtherIncomeLeases: '0'
+          includeReversals: '1'
+          transactionFromDate: '{MM/DD/YYYY}'
+          transactionToDate: '{MM/DD/YYYY}'
+          ledgerIds: 1234,5678
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns all AR-side transactions on resident ledgers within the
+      window: charges, payments, credits, write-offs, reversals. Each row
+      has lease_id, customer_id, transaction date, transaction type, GL
+      account, amount, memo.
+    plain_english_description: |
+      The raw resident-ledger feed. To compute a resident's current
+      balance, summarize this on (lease_id, amount). For most reporting
+      surfaces prefer the higher-level get_ar_invoices (what was billed)
+      and get_ar_payments (what was paid) — composing those two is cleaner
+      than working with the raw transaction stream. Use this when you
+      need the full ledger detail: credits, write-offs, reversals,
+      transaction memos. Paginated and per-property; expensive to refresh
+      portfolio-wide so prefer narrow date windows.
+    use_cases:
+      - resident_ledger
+      - delinquency_audit
+      - financial_reconciliation
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_ar_transactions
+    sync_status: defined
+  - endpoint_name: get_ar_invoices
+    vendor_method: getArInvoices
+    endpoint_group: ar
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/artransactions
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getArInvoices
+        params:
+          propertyId: '{property_id}'
+          leaseIds: 1234,5678
+          arInvoiceId: '12345'
+          fromDate: '{MM/DD/YYYY}'
+          toDate: '{MM/DD/YYYY}'
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns AR invoices (resident charges): invoiceId, leaseId, customerId,
+      invoice date, due date, total amount, status (open / paid / partial /
+      void), line items with GL accounts.
+    plain_english_description: |
+      The "what residents owe" call. AR invoices are the high-level charge
+      records; pair with get_ar_payments to compute balances. Cleaner than
+      composing from get_ar_transactions (no need to filter transaction
+      type, line items are pre-grouped). Use for delinquency dashboards,
+      collections workflows, and resident statements.
+    use_cases:
+      - delinquency_dashboard
+      - resident_billing
+      - collections_workflow
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_ar_invoices
+    sync_status: defined
+  - endpoint_name: get_ar_payments
+    vendor_method: getArPayments
+    endpoint_group: ar
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/arpayments
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getArPayments
+        params:
+          arPaymentIds: 1234,5678
+          paymentStatusTypeIds: 1234,5678
+          fromDate: '{MM/DD/YYYY}'
+          toDate: '{MM/DD/YYYY}'
+          isIncludeAllocations: '1'
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns AR payments (resident receipts): paymentId, leaseId, customerId,
+      payment date, amount, method (cash / check / ACH / card), application
+      detail (which invoice IDs were paid).
+    plain_english_description: |
+      The "what residents have paid" call. Pair with get_ar_invoices to
+      compute outstanding balances (sum(invoices.total) - sum(payments.amount)
+      per lease). Application detail shows which invoice each payment
+      cleared, which matters for partial-payment scenarios and
+      payment-method analysis. Per-property and paginated; date-window
+      filtering is essential to keep response sizes manageable.
+    use_cases:
+      - collections_dashboard
+      - payment_method_analysis
+      - cash_flow_reporting
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_ar_payments
+    sync_status: defined
+  - endpoint_name: send_lease_ar_transactions
+    vendor_method: sendLeaseArTransactions
+    endpoint_group: ar
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendLeaseArTransactions
+        version: r1
+        params:
+          transactions: '{transaction_array}'
+    response_shape_summary: |
+      Returns per-transaction insertion confirmation with transaction ID
+      and any validation errors.
+    plain_english_description: |
+      Posts a new AR charge to a lease ledger — a recurring billing
+      integration, a manual one-off charge, a fee assessment. High-risk in
+      this catalog because it writes financial truth on the property.
+      Never call from an automated sweep without explicit ops sign-off.
+    use_cases:
+      - ar_billing_integration
+      - fee_assessment
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_lease_ar_transaction_reversals
+    vendor_method: sendLeaseArTransactionReversals
+    endpoint_group: ar
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendLeaseArTransactionReversals
+        version: r1
+        params:
+          reversals: '{reversal_array}'
+    response_shape_summary: |
+      Returns per-reversal insertion confirmation, including the new
+      reversal-transaction ID linked back to the original.
+    plain_english_description: |
+      Reverses a previously posted AR transaction. Entrata's pattern is
+      reverse, never delete — the original transaction stays on the
+      ledger and a reversing transaction is appended so the audit trail
+      is preserved. Use this rather than attempting to delete a
+      transaction; deletes are not supported on a closed accounting
+      period and silently fail on open periods.
+    use_cases:
+      - ar_correction
+      - audit_trail
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_gl_transactions
+    vendor_method: getGlTransactions
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getGlTransactions
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          postMonthFrom: '{MM/YYYY}'
+          postMonthTo: '{MM/YYYY}'
+          isDetailed: true
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns GL transactions for the requested property and post-month
+      window: GL account, account name, post date, post month, amount
+      (signed; debit positive, credit negative), reference, memo.
+      Summarized by account by default; pass summarizeBy=detail to itemize
+      to the source transaction.
+    response_shape_verified: |
+      THE DETAIL PARAMETER IS `isDetailed`, NOT `summarizeBy`. `summarizeBy`
+      DOES NOT EXIST in Entrata's API: the same request with and without
+      `summarizeBy: 'detail'` returns BYTE-IDENTICAL responses, roughly a
+      tenth the size of the `isDetailed: true` response. getGlTransactions
+      silently ignores parameters it does not know; an invalid value for a
+      real parameter returns a type error instead.
+      `isDetailed` accepts true / 1 / "1"; the string "yes" returns HTTP 400
+      code 305 "Invalid data Type".
+
+      VERSION r1 ONLY. `r2` -> HTTP 404 code 109, '"getGlTransactions" does
+      not exist'. `r3` -> HTTP 404 code 131, "The service is not available
+      with provided version".
+
+      The account-rollup resultPath is UNCHANGED. Detail nests INSIDE each
+      existing rollup node:
+
+        response.result.properties.property[]
+          "@attributes": { id }             -- the PropertyId, on `id`, NOT
+              on `propertyId`
+          transactions.transaction[]        -- one node per GL ACCOUNT: the
+              rollup grain
+            glTotal: { netChange, ..., openingBalance,
+                debitOpeningBalance, creditOpeningBalance }
+                                            -- the three opening-balance
+                fields appear ONLY under isDetailed
+            glDetails.glDetail[]            -- the journal-entry grain
+              "@attributes": { id, transactionType }
+              transactionDate, postMonth, postDate, debit, credit, balance,
+              reference, memo, vendorName, vendorCode, apDetailId, unitId,
+              unitNumber, unitDesignation, buildingId, buildingNumber,
+              customTagId, customTagName, isResidentRefund
+
+      `isDetailed` is PURELY ADDITIVE: rollup values are byte-identical
+      between summary and detailed mode. Completeness holds as well -- an
+      account node carrying no glDetails always has a zero netChange. Detail
+      is absent only where there was genuinely no activity.
+
+      `paginationInfo` is ABSENT IN BOTH MODES, so the page_no / per_page
+      fields in the request template above are inert. Payload size is the
+      only bound.
+
+      Detail-line `postMonth` ships as "Mar,2026" (Mon,YYYY), not the MM/YYYY
+      the request takes. `credit` arrives already NEGATIVE, so the footing
+      identity is ADDITION: sum(debit) + sum(credit) = glTotal.netChange
+      for every account. Do not "fix" it to subtraction.
+
+      A MULTI-MONTH WINDOW COLLAPSES. postMonthFrom/postMonthTo spanning more
+      than one month returns ONE account node for the whole window, carrying
+      balances as-of the window END, which differ from the true
+      single-month values. ONE MONTH PER CALL is required. The PROPERTY
+      axis is safe at full portfolio width: every property for one month
+      fits in a single call.
+
+      Under `isDetailed` the response fans its nested lines into
+      public.entrata_gl_transaction_lines via the adapter's sideTable spec;
+      entrata_gl_transactions holds the account rollup, one row per
+      (property, account, post_month).
+    plain_english_description: |
+      The raw general-ledger feed — what hit each property's books, by
+      account, by post-month. There is no summarizeBy parameter (see
+      response_shape_verified): the response is always one node per
+      (property, account, post-month) carrying that account's balances, and
+      isDetailed: true NESTS the journal-entry lines inside each of those
+      account nodes rather than flattening to one row per source
+      transaction. The rollup values are identical either way, so detail is
+      a pure superset — 623,541 bytes against 54,606 for the same request in
+      summary mode. Call one month at a time; a multi-month post-month
+      window collapses to a single window-end node per account. Version r1
+      only — r2 and r3 both 404. For variance-style dashboards, prefer the
+      pre-joined get_budget_actuals report rather than re-implementing the
+      join. Use this when you need the raw ledger — auditing a single
+      account, building a custom management report, or feeding a downstream
+      consolidator. Schema table entrata_gl_transactions holds the account
+      rollup and is indexed on (org_id, property_id, post_month) for the
+      most common query shape; the nested detail lines land in
+      entrata_gl_transaction_lines.
+    use_cases:
+      - general_ledger_audit
+      - financial_reporting
+      - custom_management_report
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_gl_transactions
+    sync_status: active
+    wired_by: netlify/functions/_connector-adapters.js
+    verify_with_partner: true
+  - endpoint_name: get_budgets
+    vendor_method: getBudgets
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getBudgets
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          budgetYear: '{YYYY}'
+    response_shape_summary: |
+      Returns budget header records for the property: budgetId, budgetYear,
+      status (draft / approved / locked), version, and line items
+      (GL account, monthly amounts for Jan-Dec).
+    plain_english_description: |
+      The budget-header call. Returns the approved-budget data the
+      property's underwriting and ops teams are comparing against actuals.
+      Line items embed inside the response (one call covers the year);
+      no separate "getBudgetLineItems" call is needed. For variance vs
+      actuals, use get_budget_actuals — it returns the pre-joined
+      comparison row, saving the work of joining getBudgets to
+      get_gl_transactions client-side. Schema table entrata_budgets
+      consumes this output.
+    use_cases:
+      - budget_lookup
+      - underwriting_alignment
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_budgets
+    sync_status: defined
+    verify_with_partner: true
+  - endpoint_name: get_budget_actuals
+    vendor_method: getBudgetActuals
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getBudgetActuals
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          budgetId: '{budget_id}'
+          period:
+            date: '{MM/DD/YYYY}'
+            period_type: date
+    response_shape_summary: |
+      Returns variance rows comparing budget to actuals: GL account,
+      budgeted_amount, actual_amount, variance_amount, variance_percent,
+      for the requested period.
+    plain_english_description: |
+      The pre-joined budget-vs-actual view. Use this for variance
+      dashboards and management-report sections; it returns the comparison
+      already computed by Entrata, which is faster, less error-prone, and
+      handles Entrata's period-close semantics correctly. Re-implementing
+      the join from getBudgets + getGlTransactions can drift from
+      Entrata's own numbers when post-month boundaries or pending
+      transactions are involved. Period.date accepts MM/DD/YYYY and
+      respects period_type ("date" returns YTD-through-date,
+      "month_to_date" / "year_to_date" / "quarter_to_date" are also
+      supported).
+    use_cases:
+      - variance_dashboard
+      - financial_reporting
+      - management_report
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true
+  - endpoint_name: update_budgets
+    vendor_method: updateBudgets
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: updateBudgets
+        version: r1
+        params:
+          budgets: '{budget_array}'
+    response_shape_summary: |
+      Returns per-budget update confirmation with any validation errors.
+    plain_english_description: |
+      Writes new or updated budget line items into Entrata. High-risk write because budgets drive variance reporting and ops
+      decisions; never call from an automated sweep without ops
+      sign-off. Useful when integrating an external budgeting tool that
+      owns the budget canonically. Wired by netlify/functions/
+      entrata-budget-writeback.js, invoked only by the
+      EntrataBudgetWritebackSection UI under the budget_forecast_module
+      flag and gated by a typed confirmation token on the live POST path.
+    use_cases:
+      - budget_integration
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: wired
+    wired_by: netlify/functions/entrata-budget-writeback.js
+    is_write: true
+  - endpoint_name: get_bank_accounts
+    vendor_method: getBankAccounts
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getBankAccounts
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+    response_shape_summary: |
+      Returns the bank-account roster (org-wide; not
+      property-scoped): bankAccountId, name, account-type
+      (operating / reserve / security-deposit / trust),
+      CheckRoutingNumber (full 9-digit ABA), CheckAccountNumber
+      (full digits), current GL balance.
+    plain_english_description: |
+      The bank-account roster (org-wide; the response is not
+      property-scoped despite the propertyIds request param). Useful for
+      cash-management surfaces, deposit reconciliation, and
+      confirming that security-deposit funds are held in a
+      compliant trust account separate from the operating
+      account. Returns CheckRoutingNumber (full 9-digit ABA
+      routing number — public-by-design, printed on every
+      check), CheckAccountNumber (full account number),
+      account name, account type (operating / reserve /
+      security-deposit / trust), and last reconciliation
+      date. Routing numbers are not secret, but the records
+      as a whole should not be aggregated or exfiltrated
+      outside trusted contexts. Schema table
+      entrata_bank_accounts exists with org-scoped RLS;
+      method name and exact path per the partner-tier docs.
+    use_cases:
+      - cash_management
+      - deposit_reconciliation
+      - compliance
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: entrata_bank_accounts
+    sync_status: defined
+  - endpoint_name: get_transaction_tag_lists
+    vendor_method: getTransactionTagLists
+    endpoint_group: financials
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/financial
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getTransactionTagLists
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns the GL transaction-tag enumerations configured per
+      management company: tag IDs, names, and categories.
+    plain_english_description: |
+      The lookup-table call for transaction tagging. Transaction tags in
+      Entrata are custom categorizations applied to GL transactions
+      (e.g., "Renovation Capex", "Storm Damage", "Pre-Lease Concession");
+      this returns the per-tenant tag dictionary. Call once at integration
+      bootstrap, cache, and reference when interpreting tag IDs that
+      appear on get_gl_transactions rows.
+    use_cases:
+      - id_resolution
+      - custom_reporting_dimensions
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_vendors
+    vendor_method: getVendors
+    endpoint_group: vendors
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getVendors
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns the management company's vendor master: vendorId, name,
+      contact (address, phone, email), 1099 status, current balance,
+      preferred-trade categories, active/inactive flag.
+    plain_english_description: |
+      The vendor directory. Returns every approved vendor across the
+      management company (not scoped per-property — vendor relationships
+      are at the company level). Use as the lookup table for vendor-named
+      references on AP invoices, work orders, and purchase orders.
+      Schema table entrata_vendors exists; the method name is documented
+      in third-party integrator references but the exact partner-gateway
+      shape should be verified before wiring the adapter handler.
+    use_cases:
+      - vendor_directory
+      - ap_lookup
+      - 1099_reporting
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: entrata_vendors
+    sync_status: defined
+    verify_with_partner: true
+  - endpoint_name: update_vendors
+    vendor_method: updateVendors
+    endpoint_group: vendors
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: updateVendors
+        version: r1
+        params:
+          vendors: '{vendor_array}'
+    response_shape_summary: |
+      Returns per-vendor update confirmation with any validation errors.
+    plain_english_description: |
+      Writes updates to existing vendor records. Useful when integrating
+      with an external vendor-management tool that owns canonical vendor
+      contact info. High-risk here because incorrect updates affect AP
+      routing and 1099 generation.
+    use_cases:
+      - vendor_management_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_vendor_pick_lists
+    vendor_method: getVendorPickLists
+    endpoint_group: vendors
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getVendorPickLists
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns vendor-related enumeration tables: trade categories, vendor
+      types, insurance-status codes.
+    plain_english_description: |
+      The lookup-table call for the Vendors service. Returns trade
+      categories, vendor-type IDs, and insurance-status codes — needed
+      to interpret raw IDs on getVendors response rows and to validate
+      values being sent to updateVendors.
+    use_cases:
+      - id_resolution
+      - enum_caching
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_invoices
+    vendor_method: getInvoices
+    endpoint_group: ap
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getInvoices
+        version: r2
+        params:
+          ids: 12345,4567
+          invoiceNumber: '1234'
+          vendorId: '12345'
+          propertyIds: '{property_id}'
+          fromDate: '{MM/DD/YYYY}'
+          toDate: '{MM/DD/YYYY}'
+          paidInvoiceFromDate: '{MM/DD/YYYY}'
+          paidInvoiceToDate: '{MM/DD/YYYY}'
+          postMonth: '{MM/DD/YYYY}'
+          includeVoidedPayments: '1'
+          includeExported: '1'
+          customerRefunds: '1'
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns vendor (AP) invoices: invoiceId, vendorId, propertyId,
+      invoice date, due date, total amount, paid amount, status, line
+      items with GL accounts and amounts.
+    plain_english_description: |
+      The vendor-invoice feed (AP side, distinct from get_ar_invoices
+      which is resident-side). Returns every AP invoice with vendor
+      attribution, GL account breakdown, and payment status. Per-property
+      and paginated; date-window filter is essential at portfolio scale.
+      Schema table entrata_invoices exists. Method name and service path
+      per the Entrata dev-portal: getInvoices in the vendors service,
+      version r2. There is no getApInvoices method in Entrata's published
+      reference.
+    use_cases:
+      - ap_reporting
+      - vendor_spend_analysis
+      - cash_flow_forecasting
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_invoices
+    sync_status: defined
+  - endpoint_name: send_invoices
+    vendor_method: sendInvoices
+    endpoint_group: ap
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendInvoices
+        version: r1
+        params:
+          invoices: '{invoice_array}'
+    response_shape_summary: |
+      Returns per-invoice insertion confirmation with invoice ID, status,
+      and any validation errors.
+    plain_english_description: |
+      Pushes vendor (AP) invoices into Entrata. Used when an external
+      AP-automation tool captures invoices from vendor portals or email
+      and Entrata is the system of record. High-risk: writes financial truth.
+
+      AR/AP overlap: the generic
+      name sendInvoices reads as if it spans both AR and AP, but it is the
+      AP (vendor-invoice) write path ONLY. There is NO separate
+      sendApInvoices or sendApPayments method in Entrata's
+      published reference. The AR (resident-side) write counterpart is a
+      different method entirely: send_lease_ar_transactions
+      (sendLeaseArTransactions, /financial service). Do not hunt for a
+      separate AP-invoices method — this is it.
+    use_cases:
+      - ap_automation
+      - invoice_capture_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_purchase_orders
+    vendor_method: sendPurchaseOrders
+    endpoint_group: ap
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/vendors
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendPurchaseOrders
+        version: r1
+        params:
+          purchaseOrders: '{po_array}'
+    response_shape_summary: |
+      Returns per-PO insertion confirmation with PO ID, status, and any
+      validation errors.
+    plain_english_description: |
+      Pushes purchase orders into Entrata. Useful when integrating with a
+      procurement tool that owns POs canonically and Entrata needs them
+      for receiving and AP matching.
+    use_cases:
+      - procurement_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_work_orders
+    vendor_method: getWorkOrders
+    endpoint_group: maintenance
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/maintenance
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getWorkOrders
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          workOrderDateFrom: '{MM/DD/YYYY}'
+          workOrderDateTo: '{MM/DD/YYYY}'
+      page_no: <int>
+      per_page: 500
+    response_shape_summary: |
+      Returns maintenance work orders for the property: workOrderId,
+      unitId, leaseId, requested-by customer, problem description,
+      category, priority, status, requested date, scheduled date,
+      completed date, assigned tech, parts/labor cost.
+    plain_english_description: |
+      The maintenance ticket feed. Returns work orders by status (open /
+      scheduled / completed / cancelled) for the requested property and
+      date window. Useful for operations dashboards tracking
+      turn-around-time, recurring-issue analysis, and cost-per-unit
+      maintenance trends. Schema table entrata_work_orders exists.
+      Method name is well-documented in third-party connector references
+      (Domo, EliseAI); exact partner-gateway path verification recommended.
+    use_cases:
+      - maintenance_dashboard
+      - operations_reporting
+      - cost_per_unit_analysis
+    cost_class: expensive
+    rate_limit_class: standard
+    synced_to_table: entrata_work_orders
+    sync_status: defined
+    verify_with_partner: true
+  - endpoint_name: get_leads
+    vendor_method: getLeads
+    endpoint_group: leads
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leads
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeads
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          createdDateFrom: '{MM/DD/YYYY}'
+          createdDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns prospect/lead records: leadId, contact info, lead source,
+      assigned-to agent, status, desired-move-in date, desired unit type,
+      activity count.
+    plain_english_description: |
+      The prospect pipeline feed. Returns every lead created in the
+      window — phone inquiries, web form submits, walk-ins — with source
+      attribution and current status. Useful for marketing-attribution
+      analysis (which sources convert) and for leasing-team performance
+      dashboards. Not wired today; no Supabase table; documented for
+      future build.
+    use_cases:
+      - leasing_pipeline
+      - marketing_attribution
+      - leasing_agent_performance
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true
+  - endpoint_name: update_leads
+    vendor_method: updateLeads
+    endpoint_group: leads
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leads
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: updateLeads
+        version: r1
+        params:
+          leads: '{lead_array}'
+    response_shape_summary: |
+      Returns per-lead update confirmation with any validation errors.
+    plain_english_description: |
+      Updates existing leads — typically used to push status changes,
+      agent reassignments, or contact-info corrections from an external
+      CRM into Entrata. Write-mode; use sparingly.
+    use_cases:
+      - crm_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: send_mits_leads
+    vendor_method: sendMitsLeads
+    endpoint_group: leads
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leads
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendMitsLeads
+        version: r1
+        params:
+          mitsXml: '{mits_xml_payload}'
+    response_shape_summary: |
+      Returns per-lead insertion confirmation with the new leadId for
+      each accepted lead and any validation errors.
+    plain_english_description: |
+      Pushes new leads in MITS Property Marketing 3.0 XML schema. Used
+      when integrating with marketing partners (ILSes like Apartments.com,
+      Rent.) that emit leads in MITS-standard XML rather than JSON. Note
+      the payload is XML embedded in a JSON RPC envelope — Content-Type
+      stays application/json.
+    use_cases:
+      - mits_lead_ingest
+      - ils_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_lead_pick_lists
+    vendor_method: getLeadPickLists
+    endpoint_group: leads
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leads
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeadPickLists
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns lead-service enumeration tables: source IDs, status IDs,
+      sub-status IDs, lost-reason codes.
+    plain_english_description: |
+      Lookup-table call for the Leads service. Source IDs and status IDs
+      are per-tenant; call this once at bootstrap to cache the mapping
+      before interpreting raw IDs on getLeads responses.
+    use_cases:
+      - id_resolution
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: get_lead_events
+    vendor_method: getLeadEvents
+    endpoint_group: leads
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leads
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeadEvents
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          eventDateFrom: '{MM/DD/YYYY}'
+          eventDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns lead activity log: eventId, leadId, event type (call /
+      email / tour / follow-up), event date, performed-by agent, notes,
+      outcome.
+    plain_english_description: |
+      The activity-stream view of the prospect pipeline. Useful for
+      "how many tours did the team do this week" dashboards and for
+      lead-to-tour-to-application funnel analysis. Pair with getLeads
+      to get lead context.
+    use_cases:
+      - lead_activity_log
+      - funnel_analysis
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true
+  - endpoint_name: get_call_logs
+    vendor_method: getCallLogs
+    endpoint_group: leasing_center
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leasingcenter
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getCallLogs
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          callDateFrom: '{MM/DD/YYYY}'
+          callDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns leasing-center call logs: callId, propertyId, leadId,
+      inbound/outbound flag, duration, disposition, recording URL,
+      agent.
+    plain_english_description: |
+      The call-tracking feed for properties using Entrata's leasing
+      center. Includes recording URLs for QA review and disposition
+      codes for outcome tracking. Useful for call-volume dashboards and
+      conversion analysis when Entrata is also handling the inbound
+      phone tree.
+    use_cases:
+      - call_volume_reporting
+      - qa_recording_access
+      - conversion_analysis
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true
+  - endpoint_name: get_leasing_center_pick_lists
+    vendor_method: getLeasingCenterPickLists
+    endpoint_group: leasing_center
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leasingcenter
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getLeasingCenterPickLists
+        version: r1
+        params: {}
+    response_shape_summary: |
+      Returns leasing-center enumeration tables: disposition codes,
+      call categories, agent IDs.
+    plain_english_description: |
+      Lookup-table call for the Leasing Center service. Disposition codes
+      and category IDs are per-tenant; cache the result at bootstrap.
+    use_cases:
+      - id_resolution
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+  - endpoint_name: send_application
+    vendor_method: sendApplication
+    endpoint_group: applications
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/applications
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: sendApplication
+        version: r1
+        params:
+          application: '{application_object}'
+    response_shape_summary: |
+      Returns the new applicationId and a status code (accepted / rejected
+      due to validation / duplicate).
+    plain_english_description: |
+      Inserts a new rental application. Used when integrating with an
+      external application-capture tool (website widget, third-party
+      screening) and Entrata is the system of record for the application.
+      Write-mode; not wired.
+    use_cases:
+      - application_capture_integration
+    cost_class: cheap
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    is_write: true
+  - endpoint_name: get_company_applications
+    vendor_method: getCompanyApplications
+    endpoint_group: applications
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/applications
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getCompanyApplications
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+          applicationDateFrom: '{MM/DD/YYYY}'
+          applicationDateTo: '{MM/DD/YYYY}'
+    response_shape_summary: |
+      Returns applications across the management company (cross-property):
+      applicationId, propertyId, applicant contact info, status (applied /
+      approved / approved-with-conditions / denied), screening result,
+      lease-attached flag.
+    plain_english_description: |
+      Cross-property application view — distinct from per-property
+      application endpoints, this returns every application across the
+      management company in one call. Useful for company-wide application
+      pipeline dashboards and screening-vendor reconciliation. Wider
+      response than per-property versions; use date filters to constrain.
+    use_cases:
+      - applications_pipeline
+      - screening_audit
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true
+  - endpoint_name: get_mits_collections
+    vendor_method: getMitsCollections
+    endpoint_group: communications
+    http_method: POST
+    gateway_url_template: https://apis.entrata.com/ext/orgs/{subdomain}/v1/leases
+    request_body_template:
+      auth:
+        type: apikey
+      requestId: <random>
+      method:
+        name: getMitsCollections
+        version: r1
+        params:
+          propertyIds: '{property_id}'
+    response_shape_summary: |
+      Returns collections / delinquency data in MITS Property Marketing 3.0
+      XML schema: delinquent lease, amounts by bucket (30/60/90+ days
+      past due), last-payment date.
+    plain_english_description: |
+      The MITS-formatted delinquency feed. Use this when a downstream
+      consumer (credit-reporting partner, collections agency) expects
+      MITS-standard XML output rather than Entrata's native JSON. For
+      native-shape delinquency reporting, prefer composing
+      get_ar_invoices + get_ar_payments — the MITS schema is older and
+      less expressive than the native AR endpoints.
+    use_cases:
+      - mits_export
+      - collections_integration
+    cost_class: moderate
+    rate_limit_class: standard
+    synced_to_table: null
+    sync_status: not_wired
+    verify_with_partner: true

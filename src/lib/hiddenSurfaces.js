@@ -1,0 +1,13 @@
+export const TENANT_CRM_SURFACE_HIDDEN = true;
+
+export const BUDGET_AGENT_SURFACE_HIDDEN = true;
+
+export const VARIANCE_SECONDARY_COMPARISONS_HIDDEN = true;
+
+export const ENTRATA_WRITEBACK_TAB_HIDDEN = true;
+
+export const ITEMIZED_EDITOR_TAB_HIDDEN = true;
+
+export const IN_PROGRESS_MONTH_ESTIMATE_HIDDEN = true;
+
+export const CASH_FLOW_STATEMENT_ROWS_SUBLINE_HIDDEN = true;

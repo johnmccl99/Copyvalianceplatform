@@ -1,0 +1,103 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."connector-sync"]
+  timeout = 26
+
+[functions."budget-agent-chat"]
+  timeout = 26
+
+[functions."budget-assumption-analysis"]
+  timeout = 26
+
+[functions."vendor-review-scheduled"]
+  schedule = "0 11 * * *"
+
+[functions."connector-sync-scheduled"]
+  schedule = "15 */6 * * *"
+
+[functions."entrata-actuals-refresh-scheduled"]
+  schedule = "45 */6 * * *"
+
+[functions."security-program-daily"]
+  schedule = "0 2 * * *"
+
+[functions."security-rls-drift-nightly"]
+  schedule = "30 2 * * *"
+
+[functions."security-digest-weekly"]
+  schedule = "0 14 * * 1"
+
+[functions."security-anomaly-monitor"]
+  schedule = "*/30 * * * *"
+
+[functions."security-audit-log-integrity-nightly"]
+  schedule = "0 3 * * *"
+
+[functions."security-audit-log-archive-monthly"]
+  schedule = "0 4 1 * *"
+
+[functions."zombie-reaper-scheduled"]
+  schedule = "*/5 * * * *"
+
+[functions."rent-roll-capture-scheduled"]
+  schedule = "0 6 * * 1"
+
+[functions."variance-alerts-scheduled"]
+  schedule = "30 1 * * *"
+
+[functions."variance-review-sync-scheduled"]
+  schedule = "15 2 * * *"
+
+[functions."connector-health-scheduled"]
+  schedule = "0 13 * * *"
+
+[functions."budget-cache-refresh-scheduled"]
+  schedule = "20 2,8,14,20 * * *"
+
+[functions."portfolio-cache-refresh-scheduled"]
+  schedule = "50 2,8,14,20 * * *"
+
+[functions."budget-cache-freshness-scheduled"]
+  schedule = "0 */6 * * *"
+
+[functions."entrata-lease-retirement-scheduled"]
+  schedule = "35 7 * * *"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://graph.microsoft.com https://login.microsoftonline.com https://api.anthropic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(self), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Resource-Policy = "same-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "https://credashboardproperty.netlify.app"
+    Vary = "Origin"
